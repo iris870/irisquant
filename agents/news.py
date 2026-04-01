@@ -34,34 +34,34 @@ class NewsAgent(BaseAgent):
         # Using a reliable pattern for RSS.app (proxied for stability if needed)
         self.rss_feeds = {
             "Binance": [
-                "https://rss.app/feeds/v1/twitter/binance.xml",
-                "https://rss.app/feeds/v1/twitter/BinanceHelp.xml",
-                "https://rss.app/feeds/v1/twitter/binancezh.xml",
-                "https://rss.app/feeds/v1/twitter/BinanceCN.xml"
+                "https://rss.app/feeds/twitter/binance.xml",
+                "https://rss.app/feeds/twitter/BinanceHelp.xml",
+                "https://rss.app/feeds/twitter/binancezh.xml",
+                "https://rss.app/feeds/twitter/BinanceCN.xml"
             ],
             "BinanceCore": [
-                "https://rss.app/feeds/v1/twitter/cz_binance.xml",
-                "https://rss.app/feeds/v1/twitter/heyibinance.xml",
-                "https://rss.app/feeds/v1/twitter/NoahBPerlman.xml",
-                "https://rss.app/feeds/v1/twitter/RachelConlan.xml"
+                "https://rss.app/feeds/twitter/cz_binance.xml",
+                "https://rss.app/feeds/twitter/heyibinance.xml",
+                "https://rss.app/feeds/twitter/NoahBPerlman.xml",
+                "https://rss.app/feeds/twitter/RachelConlan.xml"
             ],
             "OKX": [
-                "https://rss.app/feeds/v1/twitter/okx.xml",
-                "https://rss.app/feeds/v1/twitter/OKX_Ventures.xml",
-                "https://rss.app/feeds/v1/twitter/OKXWeb3.xml",
-                "https://rss.app/feeds/v1/twitter/star_okx.xml"
+                "https://rss.app/feeds/twitter/okx.xml",
+                "https://rss.app/feeds/twitter/OKX_Ventures.xml",
+                "https://rss.app/feeds/twitter/OKXWeb3.xml",
+                "https://rss.app/feeds/twitter/star_okx.xml"
             ],
             "BESA": [
-                "https://rss.app/feeds/v1/twitter/BESA_org.xml",
-                "https://rss.app/feeds/v1/twitter/BESA_Research.xml"
+                "https://rss.app/feeds/twitter/BESA_org.xml",
+                "https://rss.app/feeds/twitter/BESA_Research.xml"
             ],
             "Media": [
-                "https://rss.app/feeds/v1/twitter/Cointelegraph.xml",
-                "https://rss.app/feeds/v1/twitter/CoinDesk.xml",
-                "https://rss.app/feeds/v1/twitter/CryptoPanic.xml"
+                "https://rss.app/feeds/twitter/Cointelegraph.xml",
+                "https://rss.app/feeds/twitter/CoinDesk.xml",
+                "https://rss.app/feeds/twitter/CryptoPanic.xml"
             ],
             "Prediction": [
-                "https://rss.app/feeds/v1/twitter/Polymarket.xml"
+                "https://rss.app/feeds/twitter/Polymarket.xml"
             ]
         }
 
@@ -105,8 +105,10 @@ class NewsAgent(BaseAgent):
                                     "link": entry.link,
                                     "published": getattr(entry, 'published', datetime.now().isoformat())
                                 })
+                        else:
+                            self.logger.warning(f"RSS Status {response.status} for {url}")
                 except Exception as e:
-                    self.logger.error(f"RSS Fetch error for {url}: {e}")
+                    self.logger.error(f"RSS Fetch error for {url}: {str(e)}", exc_info=True)
         return rss_news
 
     async def _background_fetcher(self):
