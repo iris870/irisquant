@@ -28,7 +28,7 @@ class ContractTraderAgent(BaseAgent):
         self._session = None
         
         # Strategy Parameters
-        self.volatility_threshold = 2.2
+        self.volatility_threshold = 4.5
         self.rsi_period = 14
         self.atr_period = 14
         self.atr_sl_mult = 2.0
@@ -185,12 +185,32 @@ class ContractTraderAgent(BaseAgent):
         result = await sim_exchange.create_order(self.account_id, self.symbol, side, amount)
         if result["success"]:
             self.last_trade = time.time()
-            self.logger.info("entry_opened", side=side, price=price, tp=tp, sl=sl, vol=self.volatility_threshold)
+            # Record open trade using the synchronous record_trade call from get_recorder()
+            trade_data = {
+                "strategy": self.name,
+                "direction": "long" if side == "buy" else "short",
+                "entry_price": price,
+                "position_size": amount,
+                "status": "open",
+                "open_time": int(time.time())
+            }
+            self.recorder.record_trade(trade_data)
+            self.logger.info("entry_opened", **trade_data, tp=tp, sl=sl)
 
     async def _close_position(self, reason: str):
-        if sim_exchange.accounts[self.account_id].position:
-            await sim_exchange.close_position(self.account_id, self.symbol)
-            self.logger.info("position_closed", reason=reason)
+        pos = sim_exchange.accounts[self.account_id].position
+        if pos:
+            result = await sim_exchange.close_position(self.account_id, self.symbol)
+            if result["success"]:
+                # Update the last open trade for this strategy
+                update_data = {
+                    "strategy": self.name,
+                    "exit_price": result["exit_price"],
+                    "pnl": result["pnl"],
+                    "status": "closed"
+                }
+                self.recorder.update_trade(update_data)
+                self.logger.info("position_closed", reason=reason, pnl=result["pnl"])
 
 async def main():
     agent = ContractTraderAgent()

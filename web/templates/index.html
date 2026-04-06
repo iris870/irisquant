@@ -1,281 +1,235 @@
 <!DOCTYPE html>
-<html>
-<head><title>IrisQuant Dashboard</title><script src="https://cdn.tailwindcss.com"></script></head>
-<body class="bg-gray-100">
-    <div class="container mx-auto p-6">
-        <h1 class="text-3xl font-bold mb-6">🦞 IrisQuant Trading System</h1>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8" id="accounts">
-            <!-- Account A Card -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-bold text-gray-800">账户 A (低风险)</h2>
-                    <span id="risk-a" class="px-2 py-1 text-xs font-semibold rounded bg-green-100 text-green-800">LOW</span>
-                </div>
-                <div class="space-y-2">
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">当前余额:</span>
-                        <span id="balance-a" class="font-mono font-bold text-blue-600">--</span>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IrisQuant v2.1 - 交易看板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #0a0e27; font-family: 'JetBrains Mono', monospace; color: #e0e0e0; padding: 24px; }
+        .card { background: #11162e; border: 1px solid #2a2e4a; border-radius: 12px; padding: 20px; }
+        .stat-number { font-size: 28px; font-weight: bold; }
+        .stat-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .positive { color: #00ff88; }
+        .negative { color: #ff4444; }
+        .agent-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1a1e3a; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="max-w-7xl mx-auto">
+        <div class="flex flex-col md:flex-row md:items-center justify-between mb-8 pb-4 border-b border-white/10 gap-4">
+            <div class="flex items-center gap-4">
+                <h1 class="text-2xl font-bold text-emerald-500">IrisQuant v2.1</h1>
+                <div class="flex gap-4 px-4 py-1 bg-black/40 rounded-full border border-white/5">
+                    <div class="flex items-center gap-2">
+                        <span class="text-[9px] text-zinc-500 uppercase font-bold">Binance Market</span>
+                        <span id="st-binance" class="text-[10px]">⚪</span>
                     </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">今日盈亏:</span>
-                        <span id="pnl-a" class="font-mono font-bold">--</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-[9px] text-zinc-500 uppercase font-bold">News Source</span>
+                        <span id="st-news" class="text-[10px]">⚪</span>
                     </div>
-                </div>
-            </div>
-            <!-- Account B Card -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-purple-500">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-bold text-gray-800">账户 B (中风险)</h2>
-                    <span id="risk-b" class="px-2 py-1 text-xs font-semibold rounded bg-yellow-100 text-yellow-800">MEDIUM</span>
-                </div>
-                <div class="space-y-2">
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">当前余额:</span>
-                        <span id="balance-b" class="font-mono font-bold text-purple-600">--</span>
-                    </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">今日盈亏:</span>
-                        <span id="pnl-b" class="font-mono font-bold">--</span>
+                    <div class="flex items-center gap-2">
+                        <span class="text-[9px] text-zinc-500 uppercase font-bold">Sim Exchange</span>
+                        <span id="st-sim" class="text-[10px]">⚪</span>
                     </div>
                 </div>
             </div>
-            <!-- Account C Card -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-500">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-bold text-gray-800">账户 C (高风险)</h2>
-                    <span id="risk-c" class="px-2 py-1 text-xs font-semibold rounded bg-red-100 text-red-800">HIGH</span>
+            <div class="flex items-center gap-6">
+                <div class="text-right">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest">Uptime</div>
+                    <div id="uptime" class="text-sm font-bold text-white">---</div>
                 </div>
-                <div class="space-y-2">
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">当前余额:</span>
-                        <span id="balance-c" class="font-mono font-bold text-red-600">--</span>
-                    </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-500">今日盈亏:</span>
-                        <span id="pnl-c" class="font-mono font-bold">--</span>
-                    </div>
+                <div class="text-right border-l border-white/10 pl-6">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest">RL Data DB</div>
+                    <div id="rl-db-status" class="text-sm font-bold text-emerald-500">---</div>
                 </div>
-            </div>
-        </div>
-
-        <!-- New Panels: Market, News, Status -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <!-- Market Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-t-4 border-orange-500">
-                <h2 class="text-lg font-bold mb-4 flex items-center">
-                    <span class="mr-2">📈</span> BTC 市场
-                </h2>
-                <div id="market-data" class="space-y-3">
-                    <div class="flex justify-between items-end">
-                        <span class="text-3xl font-mono font-bold text-gray-900" id="btc-price">$0.00</span>
-                        <span class="text-lg font-mono font-bold" id="btc-change">0.00%</span>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 text-sm text-gray-500">
-                        <div>High: <span id="btc-high" class="text-gray-700 font-mono">--</span></div>
-                        <div>Low: <span id="btc-low" class="text-gray-700 font-mono">--</span></div>
-                    </div>
+                <div class="text-right border-l border-white/10 pl-6">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest">Knowledge DB</div>
+                    <div id="db-status" class="text-sm font-bold text-amber-500">---</div>
                 </div>
-            </div>
-
-            <!-- News Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-t-4 border-green-500">
-                <h2 class="text-lg font-bold mb-4 flex items-center">
-                    <span class="mr-2">🗞️</span> 实时新闻
-                </h2>
-                <div id="news-list" class="space-y-3 max-h-48 overflow-y-auto pr-2">
-                    <!-- News items will appear here -->
-                    <div class="text-sm text-gray-400">Fetching news...</div>
+                <div class="text-right border-l border-white/10 pl-6">
+                    <div class="text-[10px] text-zinc-500 uppercase tracking-widest">Active Agents</div>
+                    <div id="agents-status" class="text-sm font-bold text-blue-500">---</div>
                 </div>
-            </div>
-
-            <!-- Status Panel -->
-            <div class="bg-white rounded-lg shadow-md p-6 border-t-4 border-gray-500">
-                <h2 class="text-lg font-bold mb-4 flex items-center">
-                    <span class="mr-2">📡</span> API 状态
-                </h2>
-                <div class="space-y-3">
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-600">Binance Market</span>
-                        <span id="status-binance" class="w-3 h-3 rounded-full bg-gray-300"></span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-600">News Source</span>
-                        <span id="status-news" class="w-3 h-3 rounded-full bg-gray-300"></span>
-                    </div>
-                    <div class="flex justify-between items-center">
-                        <span class="text-gray-600">Sim Exchange</span>
-                        <span id="status-sim" class="w-3 h-3 rounded-full bg-gray-300"></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Agent Status Panel -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8 border-t-4 border-indigo-500">
-            <h2 class="text-lg font-bold mb-4 flex items-center">
-                <span class="mr-2">🤖</span> Agent 状态 (PM2)
-            </h2>
-            <div id="agent-status-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <!-- Agent cards injected here -->
-                <div class="text-sm text-gray-400">Loading agents...</div>
+                <div id="socket-status" class="text-[9px] text-emerald-500 px-2 py-1 bg-emerald-500/10 rounded-lg">● ACTIVE</div>
             </div>
         </div>
 
-        <div class="mt-8 bg-white rounded-lg shadow p-4">
-            <h2 class="text-lg font-semibold mb-2">系统日志</h2>
-            <div id="logs" class="bg-gray-900 text-green-400 p-4 rounded h-64 overflow-y-auto font-mono text-sm">
-                [SYSTEM] Waiting for updates...
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8" id="accounts"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+            <div class="card">
+                <h3 class="text-sm font-bold text-emerald-500 mb-4">📊 实时行情</h3>
+                <div id="markets" class="space-y-3"></div>
             </div>
+            <div class="card">
+                <h3 class="text-sm font-bold text-emerald-500 mb-4">⚙️ Agent 状态</h3>
+                <div id="agents" class="max-h-80 overflow-y-auto"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-sm font-bold text-emerald-500">📋 系统实时日志 (PM2 Logs)</h3>
+                <div class="flex gap-2">
+                    <input type="text" id="log-filter" onkeyup="handleLogSearch(event)" placeholder="搜索 Agent 或 '错误'..." class="bg-black/40 border border-white/10 rounded px-3 py-1 text-xs focus:outline-none focus:border-emerald-500/50 w-64">
+                    <button onclick="manualSearch()" class="text-[10px] text-emerald-400 border border-emerald-500/30 rounded px-3 hover:bg-emerald-500/10">搜索</button>
+                    <button onclick="clearLogs()" class="text-[10px] text-zinc-500 hover:text-white border border-white/10 rounded px-2">清屏</button>
+                </div>
+            </div>
+            <div id="logs" class="h-96 overflow-y-auto font-mono bg-black/20 p-4 rounded-lg border border-white/5 text-[11px]"></div>
         </div>
     </div>
 
     <script>
-        async function updateDashboard() {
-            try {
-                const response = await fetch('/api/accounts');
-                const accounts = await response.json();
-                
-                const logEl = document.getElementById('logs');
-                const timestamp = new Date().toLocaleTimeString();
-                
-                for (const [id, data] of Object.entries(accounts)) {
-                    const lowerId = id.toLowerCase();
-                    
-                    // Update Balance
-                    const balanceEl = document.getElementById(`balance-${lowerId}`);
-                    if (balanceEl) {
-                        balanceEl.innerText = `$${data.balance.toLocaleString()}`;
-                    }
-                    
-                    // Update PnL
-                    const pnlEl = document.getElementById(`pnl-${lowerId}`);
-                    if (pnlEl) {
-                        const pnl = data.daily_pnl;
-                        pnlEl.innerText = `${pnl >= 0 ? '+' : ''}${pnl.toLocaleString()}`;
-                        pnlEl.className = `font-mono font-bold ${pnl >= 0 ? 'text-green-600' : 'text-red-600'}`;
-                    }
+        const ACCOUNT_NAMES = {
+            "BINANCE_MAIN": "Binance Main (btc-rolling)",
+            "OKX_SUB1": "OKX Sub-Account 1 (contract-trader)",
+            "POLYMARKET": "Polymarket (polymarket-bot)",
+            "WEATHER_ALPHA": "Weather Alpha (weather-alpha-bot)"
+        };
 
-                    // Update Risk Badge
-                    const riskEl = document.getElementById(`risk-${lowerId}`);
-                    if (riskEl) {
-                        riskEl.innerText = data.risk.toUpperCase();
-                        const colors = {
-                            'low': 'bg-green-100 text-green-800',
-                            'medium': 'bg-yellow-100 text-yellow-800',
-                            'high': 'bg-red-100 text-red-800'
-                        };
-                        riskEl.className = `px-2 py-1 text-xs font-semibold rounded ${colors[data.risk] || ''}`;
-                    }
-                }
+        async function fetchData() {
+            try {
+                const [accounts, status, markets] = await Promise.all([
+                    fetch('/api/accounts').then(r => r.json()),
+                    fetch('/api/status').then(r => r.json()),
+                    fetch('/api/markets').then(r => r.json())
+                ]);
+
+                // 🌟 更新 API 状态灯
+                const stBinance = document.getElementById('st-binance');
+                const stNews = document.getElementById('st-news');
+                const stSim = document.getElementById('st-sim');
                 
-                // Add log entry
-                const logLine = document.createElement('div');
-                logLine.textContent = `[${timestamp}] Data synced from /api/accounts`;
-                logEl.appendChild(logLine);
-                logEl.scrollTop = logEl.scrollHeight;
-                
-            } catch (error) {
-                console.error('Failed to fetch account data:', error);
-            }
+                if (stBinance) stBinance.innerText = status.binance_market;
+                if (stNews) stNews.innerText = status.news_source;
+                if (stSim) stSim.innerText = status.sim_exchange;
+
+                // 🌟 更新右上角概览
+                const uptimeEl = document.getElementById('uptime');
+                const rlDbEl = document.getElementById('rl-db-status');
+                const agentsEl = document.getElementById('agents-status');
+                const dbEl = document.getElementById('db-status');
+
+                if (uptimeEl) uptimeEl.innerText = status.uptime;
+                if (rlDbEl) rlDbEl.innerText = status.rl_db_size;
+                if (agentsEl) agentsEl.innerText = `${status.agents_online} / ${status.agents_total}`;
+                if (dbEl) dbEl.innerText = status.db_size;
+
+                document.getElementById('accounts').innerHTML = Object.entries(accounts).map(([key, val]) => `
+                    <div class="card">
+                        <div class="stat-label">${ACCOUNT_NAMES[key] || key}</div>
+                        <div class="stat-number">$${val.balance.toLocaleString()}</div>
+                        <div class="flex justify-between mt-2">
+                            <span class="stat-label">今日盈亏</span>
+                            <span class="${val.daily_pnl >= 0 ? 'positive' : 'negative'}">
+                                ${val.daily_pnl >= 0 ? '+' : ''}$${val.daily_pnl.toFixed(2)}
+                            </span>
+                        </div>
+                    </div>
+                `).join('');
+
+                document.getElementById('markets').innerHTML = Object.entries(markets).map(([coin, data]) => `
+                    <div class="flex justify-between items-center py-2 border-b border-zinc-800">
+                        <span class="font-bold">${coin}/USDT</span>
+                        <span>$${data.price.toLocaleString()}</span>
+                        <span class="${data.change >= 0 ? 'positive' : 'negative'}">${data.change >= 0 ? '+' : ''}${data.change}%</span>
+                    </div>
+                `).join('');
+
+                document.getElementById('agents').innerHTML = status.agents.map(a => `
+                    <div class="agent-row">
+                        <span>${a.name}</span>
+                        <span class="${a.status === 'online' ? 'positive' : 'negative'}">● ${a.status.toUpperCase()}</span>
+                        <span>${a.cpu}</span><span>${a.memory}</span><span>${a.restarts}</span>
+                    </div>
+                `).join('');
+            } catch (e) { console.error(e); }
         }
 
-        // Poll every 2 seconds
-        setInterval(updateDashboard, 2000);
-        updateDashboard();
-
-        // Fetch Market, News and Status every 10 seconds
-        async function fetchExtendedData() {
-            try {
-                // Market Data
-                const marketRes = await fetch('/api/market');
-                const marketData = await marketRes.json();
-                if (marketData.status === 'online') {
-                    const price = parseFloat(marketData.price);
-                    const change = parseFloat(marketData.change);
-                    document.getElementById('btc-price').innerText = `$${price.toLocaleString()}`;
-                    document.getElementById('btc-change').innerText = `${change > 0 ? '+' : ''}${change}%`;
-                    document.getElementById('btc-change').className = `text-lg font-mono font-bold ${change >= 0 ? 'text-green-600' : 'text-red-600'}`;
-                    document.getElementById('btc-high').innerText = parseFloat(marketData.high).toLocaleString();
-                    document.getElementById('btc-low').innerText = parseFloat(marketData.low).toLocaleString();
-                }
-
-                // News Data
-                const newsRes = await fetch('/api/news');
-                const newsData = await newsRes.json();
-                const newsList = document.getElementById('news-list');
-                newsList.innerHTML = '';
-                if (newsData.news && newsData.news.length > 0) {
-                    newsData.news.forEach(item => {
-                        const div = document.createElement('div');
-                        div.className = "border-b pb-2 last:border-0";
-                        const sentimentColor = item.sentiment === 'positive' ? 'bg-green-100 text-green-700' : 
-                                             (item.sentiment === 'negative' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700');
-                        div.innerHTML = `
-                            <a href="${item.url}" target="_blank" class="text-xs font-medium hover:text-blue-600 block mb-1">${item.title}</a>
-                            <div class="flex justify-between items-center text-[10px]">
-                                <span class="text-gray-400">${item.source}</span>
-                                <span class="px-1.5 py-0.5 rounded ${sentimentColor}">${item.sentiment.toUpperCase()}</span>
-                            </div>
-                        `;
-                        newsList.appendChild(div);
-                    });
-                } else {
-                    newsList.innerHTML = '<div class="text-xs text-gray-400">No news available.</div>';
-                }
-
-                // Status Data
-                const statusRes = await fetch('/api/status');
-                const statusData = await statusRes.json();
-                const updateDot = (id, status) => {
-                    const el = document.getElementById(id);
-                    el.className = `w-3 h-3 rounded-full ${status === 'online' ? 'bg-green-500' : 'bg-red-500'}`;
-                };
-                updateDot('status-binance', statusData.binance);
-                updateDot('status-news', statusData.news_api);
-                updateDot('status-sim', statusData.sim_exchange);
-
-                // Fetch Agent Status
-                const agentsRes = await fetch('/api/agents/status');
-                const agentsData = await agentsRes.json();
-                const agentsGrid = document.getElementById('agent-status-grid');
-                agentsGrid.innerHTML = '';
-                
-                if (agentsData && Array.isArray(agentsData)) {
-                    agentsData.forEach(agent => {
-                        const statusColor = agent.status === 'online' ? 'text-green-500' : 'text-red-500';
-                        const dotColor = agent.status === 'online' ? 'bg-green-500' : 'bg-red-500';
-                        const isNewsAgent = agent.name === 'news-agent';
-                        
-                        const div = document.createElement('div');
-                        div.className = `p-3 border rounded-lg flex flex-col gap-1 ${isNewsAgent ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50'}`;
-                        div.innerHTML = `
-                            <div class="flex justify-between items-center">
-                                <span class="font-bold text-sm truncate" title="${agent.name}">${isNewsAgent ? '📰 ' : ''}${agent.name}</span>
-                                <span class="w-2 h-2 rounded-full ${dotColor}"></span>
-                            </div>
-                            <div class="flex justify-between text-[11px] text-gray-500">
-                                <span>Status: <span class="${statusColor}">${agent.status}</span></span>
-                                <span>Restarts: ${agent.restarts}</span>
-                            </div>
-                            <div class="flex justify-between text-[11px] text-gray-500">
-                                <span>Mem: ${agent.memory}</span>
-                                <span>CPU: ${agent.cpu}</span>
-                            </div>
-                        `;
-                        agentsGrid.appendChild(div);
-                    });
-                } else {
-                    agentsGrid.innerHTML = '<div class="text-xs text-gray-400">No agents detected.</div>';
-                }
-
-            } catch (err) {
-                console.error("Error fetching extended data:", err);
-            }
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
         }
 
-        // Initial fetch and interval
-        fetchExtendedData();
-        setInterval(fetchExtendedData, 10000);
+        async function manualSearch() {
+            const keyword = document.getElementById('log-filter').value;
+            const logsDiv = document.getElementById('logs');
+            try {
+                const response = await fetch(`/api/logs?limit=100&keyword=${encodeURIComponent(keyword)}`);
+                const data = await response.json();
+                
+                logsDiv.innerHTML = ''; // 搜索时清空旧内容
+                data.forEach(item => renderLogLine(item));
+            } catch (e) { console.error('Search failed:', e); }
+        }
+
+        function handleLogSearch(e) {
+            if (e.key === 'Enter') manualSearch();
+        }
+
+        function renderLogLine(data) {
+            const logsDiv = document.getElementById('logs');
+            const text = data.message ? data.message.toLowerCase() : "";
+            
+            const logItem = document.createElement('div');
+            logItem.className = 'py-0.5 border-b border-white/5 opacity-80';
+            
+            let highlightClass = "";
+            if (text.includes('error') || text.includes('failed') || text.includes('exception') || text.includes('错误')) {
+                highlightClass = "text-red-400 font-bold";
+            }
+
+            logItem.innerHTML = `
+                <span class="text-blue-400 mr-2 text-[10px] w-12 inline-block opacity-50 uppercase">[${data.agent}]</span>
+                <span class="${highlightClass}">${data.message}</span>
+            `;
+            
+            logsDiv.appendChild(logItem);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+            if (logsDiv.childElementCount > 1000) logsDiv.removeChild(logsDiv.firstChild);
+        }
+
+        function connectLogSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const socket = new WebSocket(`${protocol}//${window.location.host}/ws/logs/all`);
+            const statusEl = document.getElementById('socket-status');
+            const logsDiv = document.getElementById('logs');
+            const filterInput = document.getElementById('log-filter');
+
+            socket.onopen = () => {
+                statusEl.innerText = '● LIVE STREAMING';
+                statusEl.className = 'text-[10px] text-emerald-500';
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const query = filterInput.value ? filterInput.value.toLowerCase() : "";
+                
+                // 如果搜索框有内容，WebSocket 只渲染匹配的行
+                if (query) {
+                    const text = data.message ? data.message.toLowerCase() : "";
+                    const agent = data.agent ? data.agent.toLowerCase() : "";
+                    const isErrorQuery = (query === '错误' || query === 'error') && (text.includes('error') || text.includes('failed') || text.includes('exception') || text.includes('错误'));
+                    
+                    if (!text.includes(query) && !agent.includes(query) && !isErrorQuery) return;
+                }
+
+                renderLogLine(data);
+            };
+
+            socket.onclose = () => {
+                statusEl.innerText = '● RECONNECTING...';
+                statusEl.className = 'text-[10px] text-yellow-500';
+                setTimeout(connectLogSocket, 3000);
+            };
+        }
+
+        fetchData();
+        connectLogSocket();
+        setInterval(fetchData, 10000);
     </script>
 </body>
 </html>

@@ -141,9 +141,19 @@ class MonitorAgent:
             system
         )
 
-        # 2. Agent 健康检查
-        # 获取 pm2 list 中的所有 agent 名
-        agents = ['leader', 'news', 'onchain', 'btc-rolling', 'contract-trader', 'polymarket', 'learning']
+        # 2. Agent 健康检查 - 动态获取 pm2 list 中的所有 agent 名
+        try:
+            proc = subprocess.run(['pm2', 'jlist'], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                processes = json.loads(proc.stdout)
+                # 监控所有在 pm2 列表中的进程，排除 monitor 自身
+                agents = [p['name'] for p in processes if p['name'] != 'monitor_agent']
+            else:
+                agents = ['leader', 'news', 'onchain', 'btc-rolling', 'contract-trader', 'polymarket', 'learning']
+        except Exception as e:
+            logger.error(f"获取 PM2 列表失败: {e}")
+            agents = ['leader', 'news', 'onchain', 'btc-rolling', 'contract-trader', 'polymarket', 'learning']
+
         agent_status = [self.check_agent(a) for a in agents]
 
         # 3. 交易指标

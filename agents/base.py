@@ -7,10 +7,13 @@ from core.logger import setup_logger, new_trace_context
 from core.priority_queue import PriorityQueue, Priority
 from core.cache import LocalCache
 
+from core.data_recorder import DataRecorder
+
 class BaseAgent:
     def __init__(self, name: str):
         self.name = name
         self.logger = setup_logger(name)
+        self.recorder = DataRecorder() # 注入数据记录器 (DataRecorder injection)
         self.cache = LocalCache(default_ttl=5)
         self.stats = {"win_rate": 0.0, "trades": 0, "wins": 0, "pnl": 0.0}
         self.running = True
@@ -25,6 +28,8 @@ class BaseAgent:
     async def stop(self):
         self.running = False
         self.logger.info("agent_stopped")
+        if hasattr(self, "recorder"):
+            self.recorder.close() # 显式释放资源 (Explicit resource release)
 
     async def _run_queue(self):
         while self.running:
@@ -41,13 +46,22 @@ class BaseAgent:
     async def _on_start(self):
         pass
 
-    def update_stats(self, win: bool, pnl: float):
+    def update_stats(self, win: bool, pnl: float, data: dict = None):
         self.stats["trades"] += 1
         self.stats["pnl"] += pnl
         if win:
             self.stats["wins"] += 1
         if self.stats["trades"] > 0:
             self.stats["win_rate"] = self.stats["wins"] / self.stats["trades"]
+        
+        # 核心修复：记录交易数据到数据库 (Core Fix: Record to DB)
+        if data:
+            try:
+                self.recorder.record_trade(self.name, data)
+                self.logger.info("trade_recorded", agent=self.name, pnl=pnl)
+            except Exception as e:
+                self.logger.error("recording_failed", error=str(e))
+
         if self.stats["win_rate"] < 0.5 and self.stats["trades"] > 10:
             asyncio.create_task(self._self_optimize())
 

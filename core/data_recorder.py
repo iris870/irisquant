@@ -92,6 +92,8 @@ class DataRecorder:
                 position_size REAL,
                 pnl REAL,
                 market_state TEXT,
+                status TEXT DEFAULT 'closed',
+                open_time INTEGER,
                 created_at INTEGER DEFAULT (strftime('%s', 'now'))
             )
             """)
@@ -191,8 +193,8 @@ class DataRecorder:
                 cursor = conn.cursor()
                 cursor.execute("""
                 INSERT INTO trades (timestamp, strategy, direction, entry_price, 
-                                 exit_price, position_size, pnl, market_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                 exit_price, position_size, pnl, market_state, status, open_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     trade_data.get('timestamp', int(datetime.now().timestamp())),
                     trade_data.get('strategy'),
@@ -201,13 +203,42 @@ class DataRecorder:
                     trade_data.get('exit_price'),
                     trade_data.get('position_size'),
                     trade_data.get('pnl'),
-                    json.dumps(trade_data.get('market_state')) if isinstance(trade_data.get('market_state'), (dict, list)) else trade_data.get('market_state')
+                    json.dumps(trade_data.get('market_state')) if isinstance(trade_data.get('market_state'), (dict, list)) else trade_data.get('market_state'),
+                    trade_data.get('status', 'closed'),
+                    trade_data.get('open_time')
                 ))
                 conn.commit()
-            logger.info(f"Recorded trade: {trade_data.get('strategy')} PnL={trade_data.get('pnl')}")
+            logger.info(f"Recorded trade: {trade_data.get('strategy')} Status={trade_data.get('status')}")
             return True
         except Exception as e:
             logger.error(f"Failed to record trade: {e}")
+            return False
+
+    def update_trade(self, update_data: Dict[str, Any]) -> bool:
+        """Update an open trade record."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Find the latest open trade for this strategy
+                cursor.execute("""
+                UPDATE trades SET 
+                exit_price = ?, 
+                pnl = ?, 
+                status = 'closed',
+                timestamp = ?
+                WHERE strategy = ? AND status = 'open'
+                ORDER BY open_time DESC LIMIT 1
+                """, (
+                    update_data.get('exit_price'),
+                    update_data.get('pnl'),
+                    int(datetime.now().timestamp()),
+                    update_data.get('strategy')
+                ))
+                conn.commit()
+            logger.info(f"Updated trade: {update_data.get('strategy')} PnL={update_data.get('pnl')}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update trade: {e}")
             return False
     
     def record_system_event(self, event_type: str, agent_name: str, 
@@ -274,6 +305,62 @@ class DataRecorder:
         except Exception as e:
             logger.error(f"Failed to get market data: {e}")
             return []
+
+    def get_unrealized_pnl(self, current_prices: Dict[str, float]) -> Dict[str, float]:
+        """
+        Calculate unrealized PnL based on open trades in database.
+        
+        Args:
+            current_prices: Dict mapping symbol (e.g. 'BTC') to current float price.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # Get all open trades
+                cursor.execute("SELECT * FROM trades WHERE status = 'open'")
+                open_trades = [dict(row) for row in cursor.fetchall()]
+                
+                total_unrealized_pnl = 0.0
+                total_position_value = 0.0
+                
+                for trade in open_trades:
+                    # Map strategy/pair to symbol in current_prices
+                    # Basic mapping: if strategy or market_state contains 'BTC', use BTC price
+                    symbol = 'BTC' # Default
+                    price = current_prices.get(symbol, 0.0)
+                    
+                    if price > 0:
+                        entry_price = trade.get('entry_price', 0.0)
+                        size = trade.get('position_size', 0.0)
+                        direction = trade.get('direction', 'long').lower()
+                        
+                        if direction == 'long':
+                            pnl = (price - entry_price) * size
+                        else: # short
+                            pnl = (entry_price - price) * size
+                            
+                        total_unrealized_pnl += pnl
+                        total_position_value += (price * size)
+                
+                return {
+                    "unrealized_pnl": total_unrealized_pnl,
+                    "position_value": total_position_value
+                }
+        except Exception as e:
+            logger.error(f"Failed to calculate unrealized PnL: {e}")
+            return {"unrealized_pnl": 0.0, "position_value": 0.0}
+
+    def get_trades(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get trade history."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?", (limit,))
+                rows = cursor.fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get trades: {e}")
+            return []
     
     def cleanup_old_data(self, retention_days: int = 90) -> int:
         """Clean up data older than retention_days."""
@@ -296,6 +383,10 @@ class DataRecorder:
         except Exception as e:
             logger.error(f"Failed to cleanup data: {e}")
             return 0
+
+    def close(self):
+        """Placeholder for backward compatibility with older agent calls."""
+        logger.debug("DataRecorder closed (no-op).")
 
 # Global Singleton
 _recorder: Optional[DataRecorder] = None

@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agents.base import BaseAgent
 from core.rate_limiter import RateLimiter
+from core.telegram import send_alert_async
 
 class NewsAgent(BaseAgent):
     def __init__(self):
@@ -30,38 +31,15 @@ class NewsAgent(BaseAgent):
         self.sentiment_summary = {"positive": 0, "negative": 0, "neutral": 0, "score": 0.0}
         self.seen_titles = set()
 
-        # RSS Sources configuration (Twitter via RSS.app/twitrss.me pattern)
-        # Using a reliable pattern for RSS.app (proxied for stability if needed)
+        # RSS Sources configuration (Using more stable feeds)
         self.rss_feeds = {
+            "Market": [
+                "https://cryptopanic.com/news/rss/",
+                "https://www.coindesk.com/arc/outboundfeeds/rss/",
+                "https://cointelegraph.com/rss"
+            ],
             "Binance": [
-                "https://rss.app/feeds/twitter/binance.xml",
-                "https://rss.app/feeds/twitter/BinanceHelp.xml",
-                "https://rss.app/feeds/twitter/binancezh.xml",
-                "https://rss.app/feeds/twitter/BinanceCN.xml"
-            ],
-            "BinanceCore": [
-                "https://rss.app/feeds/twitter/cz_binance.xml",
-                "https://rss.app/feeds/twitter/heyibinance.xml",
-                "https://rss.app/feeds/twitter/NoahBPerlman.xml",
-                "https://rss.app/feeds/twitter/RachelConlan.xml"
-            ],
-            "OKX": [
-                "https://rss.app/feeds/twitter/okx.xml",
-                "https://rss.app/feeds/twitter/OKX_Ventures.xml",
-                "https://rss.app/feeds/twitter/OKXWeb3.xml",
-                "https://rss.app/feeds/twitter/star_okx.xml"
-            ],
-            "BESA": [
-                "https://rss.app/feeds/twitter/BESA_org.xml",
-                "https://rss.app/feeds/twitter/BESA_Research.xml"
-            ],
-            "Media": [
-                "https://rss.app/feeds/twitter/Cointelegraph.xml",
-                "https://rss.app/feeds/twitter/CoinDesk.xml",
-                "https://rss.app/feeds/twitter/CryptoPanic.xml"
-            ],
-            "Prediction": [
-                "https://rss.app/feeds/twitter/Polymarket.xml"
+                "https://www.binance.com/en/support/announcement/c-48?format=rss"
             ]
         }
 
@@ -91,28 +69,38 @@ class NewsAgent(BaseAgent):
 
     async def _fetch_rss(self, session: aiohttp.ClientSession):
         rss_news = []
+        # Updated headers to be more robust
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
         for category, urls in self.rss_feeds.items():
             for url in urls:
                 try:
-                    async with session.get(url, timeout=10) as response:
+                    # Apply headers to RSS requests too
+                    async with session.get(url, timeout=15, headers=headers) as response:
                         if response.status == 200:
                             content = await response.text()
                             feed = feedparser.parse(content)
-                            for entry in feed.entries[:5]: # Take top 5 from each
+                            if not feed.entries:
+                                self.logger.warning(f"RSS Feed empty for {url}")
+                            for entry in feed.entries[:10]: # Take top 10
                                 rss_news.append({
                                     "title": entry.title,
-                                    "source": f"RSS:{category}",
-                                    "link": entry.link,
+                                    "source": f"{category}:{getattr(feed.feed, 'title', 'RSS')}",
+                                    "link": getattr(entry, 'link', ''),
                                     "published": getattr(entry, 'published', datetime.now().isoformat())
                                 })
                         else:
                             self.logger.warning(f"RSS Status {response.status} for {url}")
                 except Exception as e:
-                    self.logger.error(f"RSS Fetch error for {url}: {str(e)}", exc_info=True)
+                    self.logger.error(f"RSS Fetch error for {url}: {str(e)}")
         return rss_news
 
     async def _background_fetcher(self):
-        cv_url = "https://cryptocurrency.cv/api/news"
+        # Using a more reliable public news API as backup if CV fails
+        backup_url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -121,32 +109,43 @@ class NewsAgent(BaseAgent):
         async with aiohttp.ClientSession(headers=headers) as session:
             while self.running:
                 try:
-                    if await self.rate_limiter.acquire("news_fetch"):
-                        all_raw_items = []
-                        
-                        # 1. Fetch CV News
-                        try:
-                            async with session.get(cv_url, timeout=15, ssl=False) as response:
-                                if response.status == 200:
-                                    data = await response.json()
-                                    raw_cv = data if isinstance(data, list) else (data.get("articles") or data.get("Data") or [])
-                                    all_raw_items.extend([{"title": i.get("title") or i.get("body"), "source": "CV"} for i in raw_cv if isinstance(i, dict)])
-                        except Exception as e:
-                            self.logger.error(f"CV Fetch error: {e}")
+                    # Reduced interval for faster recovery testing, then back to 30s
+                    all_raw_items = []
+                    
+                    # 1. Fetch CV News
+                    try:
+                        async with session.get(self.news_api_url, timeout=15, ssl=False) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                raw_cv = data if isinstance(data, list) else (data.get("articles") or data.get("Data") or [])
+                                all_raw_items.extend([{"title": i.get("title") or i.get("body"), "source": "CV"} for i in raw_cv if isinstance(i, dict)])
+                    except Exception:
+                        pass
 
-                        # 2. Fetch RSS Feeds
-                        rss_items = await self._fetch_rss(session)
-                        all_raw_items.extend(rss_items)
+                    # 2. Fetch Backup (CryptoCompare)
+                    try:
+                        async with session.get(backup_url, timeout=10) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                articles = data.get("Data", [])
+                                all_raw_items.extend([{"title": a.get("title"), "source": "CryptoCompare"} for a in articles])
+                    except Exception:
+                        pass
 
-                        if all_raw_items:
-                            self._process_news_batch(all_raw_items)
-                            self.logger.info(f"Synced {len(self.latest_news)} items. Score: {self.sentiment_summary['score']:.2f}")
-                        
-                        self.rate_limiter.release(True)
+                    # 3. Fetch RSS Feeds
+                    rss_items = await self._fetch_rss(session)
+                    all_raw_items.extend(rss_items)
+
+                    if all_raw_items:
+                        self._process_news_batch(all_raw_items)
+                        self.logger.info(f"Processed {len(all_raw_items)} raw items. Active: {len(self.latest_news)}. Score: {self.sentiment_summary['score']:.2f}")
+                    
                 except Exception as e:
-                    self.logger.error(f"Fetcher loop error: {e}")
+                    error_msg = f"Fetcher loop error: {e}"
+                    self.logger.error(error_msg)
+                    await send_alert_async(f"⚠️ [NewsAgent] Critical fetcher error: {e}")
                 
-                await asyncio.sleep(30)
+                await asyncio.sleep(60) # 1 minute refresh rate is safer for rate limits
 
     def _process_news_batch(self, raw_items: list):
         counts = {"positive": 0, "negative": 0, "neutral": 0}

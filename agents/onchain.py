@@ -70,50 +70,91 @@ class OnchainAgent(BaseAgent):
 
     async def _poll_blocks(self):
         """Poll for new blocks and filter large trades"""
-        last_block = self.w3.eth.block_number
+        last_block = self.w3.eth.block_number - 100 # Start 100 blocks back to avoid gaps
+        BLOCK_STEP = 2000 # Max blocks per query to avoid RPC limits
+
         while self.running:
             try:
+                # 1. Update w3 reference if needed (handle session timeouts)
+                # 2. Get current block
                 current_block = self.w3.eth.block_number
-                if current_block > last_block:
-                    logger.info(f"Scanning blocks {last_block + 1} to {current_block}")
-                    # In a real high-traffic env, we'd use event filters or a custom indexer.
-                    # For this test, we poll logs for the specific contract.
-                    logs = self.w3.eth.get_logs({
-                        "fromBlock": last_block + 1,
-                        "toBlock": current_block,
-                        "address": self.w3.to_checksum_address(POLYMARKET_CONTRACT)
-                    })
+                
+                # Check if we are too far behind
+                target_block = min(last_block + BLOCK_STEP, current_block)
+
+                if target_block > last_block:
+                    logger.info(f"Scanning blocks {last_block + 1} to {target_block} (current: {current_block})")
                     
-                    for log in logs:
-                        try:
-                            event = self.contract.events.PositionModified().process_log(log)
-                            args = event['args']
-                            amount_usdc = abs(args['amount']) / 10**6
-                            
-                            if amount_usdc >= (self.threshold / 10**6):
-                                logger.info(f"Whale detected! {args['bettor']} traded {amount_usdc} USDC on {args['conditionId'].hex()}")
-                                self._record_trade(args['bettor'], args['conditionId'].hex(), amount_usdc)
-                        except Exception as e:
-                            continue
-                            
-                    last_block = current_block
-                await asyncio.sleep(10) # Poll every 10s
+                    try:
+                        logs = self.w3.eth.get_logs({
+                            "fromBlock": last_block + 1,
+                            "toBlock": target_block,
+                            "address": self.w3.to_checksum_address(POLYMARKET_CONTRACT)
+                        })
+                        
+                        for log in logs:
+                            try:
+                                event = self.contract.events.PositionModified().process_log(log)
+                                args = event['args']
+                                amount_usdc = abs(args['amount']) / 10**6
+                                
+                                if amount_usdc >= (self.threshold / 10**6):
+                                    logger.info(f"Whale detected! {args['bettor']} traded {amount_usdc} USDC on {args['conditionId'].hex()}")
+                                    self._record_trade(args['bettor'], args['conditionId'].hex(), amount_usdc)
+                            except Exception as e:
+                                continue
+                        
+                        last_block = target_block
+                    except Exception as e:
+                        if "limit" in str(e).lower() or "400" in str(e) or "invalid block range" in str(e).lower():
+                            logger.warning(f"RPC Limit/Range error, reducing step size: {e}")
+                            BLOCK_STEP = max(5, BLOCK_STEP // 2)
+                        else:
+                            raise e
+                
+                # If caught up, wait. If behind, move to next batch immediately.
+                if last_block >= current_block:
+                    await asyncio.sleep(10)
+                else:
+                    await asyncio.sleep(0.1) # Faster fast-forward
+
             except Exception as e:
-                logger.error(f"Error polling blocks: {e}")
+                logger.error(f"Critical error in polling loop: {e}")
                 await asyncio.sleep(5)
 
     def _record_trade(self, address, condition_id, amount):
-        """Record trade to SQLite for win_rate calculation"""
+        """Record trade to SQLite and data_recorder for RL analysis"""
         try:
+            # 1. Local SQLite record
             conn = sqlite3.connect(DB_PATH)
             cur = conn.cursor()
-            # trades_raw table for historical analysis
-            cur.execute("CREATE TABLE IF NOT EXISTS trades_raw (address TEXT, condition_id TEXT, amount REAL, timestamp INTEGER)")
             cur.execute("INSERT INTO trades_raw VALUES (?, ?, ?, ?)", (address, condition_id, amount, int(time.time())))
             conn.commit()
             conn.close()
+
+            # 2. RL Data Recorder (for cross-agent visibility)
+            from core.data_recorder import get_recorder
+            from datetime import datetime
+            recorder = get_recorder()
+            
+            trade_data = {
+                "timestamp": int(datetime.now().timestamp()),
+                "strategy": "onchain_whale_detection",
+                "direction": "whale_activity",
+                "entry_price": 0.0,
+                "exit_price": 0.0,
+                "position_size": amount,
+                "pnl": 0.0,
+                "market_state": {
+                    "bettor": address,
+                    "condition_id": condition_id,
+                    "source": "polymarket_contract"
+                }
+            }
+            recorder.record_trade(trade_data)
+            logger.info(f"Recorded whale trade for RL: {amount} USDC")
         except Exception as e:
-            logger.error(f"DB Error: {e}")
+            logger.error(f"Error recording trade: {e}")
 
     async def _update_smart_money_stats(self):
         """Hourly update of smart_money table"""

@@ -14,7 +14,7 @@ def send_alert(message: str):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {
-            "chat_id": CHAT_ID,
+            "chat_id": f"{CHAT_ID}",
             "text": message,
             "parse_mode": "HTML"
         }
@@ -31,7 +31,7 @@ async def send_alert_async(message: str):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         payload = {
-            "chat_id": CHAT_ID,
+            "chat_id": f"{CHAT_ID}",
             "text": message,
             "parse_mode": "HTML"
         }
@@ -49,8 +49,7 @@ if __name__ == "__main__":
         msg = sys.argv[1]
     
     print(f"Sending test message: {msg}")
-    test_msg = "<b>[IrisQuant Test]</b>
-" + msg
+    test_msg = f"<b>[IrisQuant Test]</b> {msg}"
     if send_alert(test_msg):
         print("Success")
     else:

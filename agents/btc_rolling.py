@@ -4,6 +4,14 @@ BTC 5% 滚仓复利系统 v4.6
 宏观感知型动态阈值系统
 """
 
+import os
+import sys
+
+# Add the project root to sys.path
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import asyncio
 import time
 import random
@@ -145,6 +153,7 @@ class MarketStateDetector:
     def __init__(self):
         self.atr_pct = 1.5
         self.adx = 25
+        self.trend_state = "neutral"
     
     def calculate_atr(self, klines: List[KLine], period: int = 14) -> float:
         if len(klines) < period + 1:
@@ -162,7 +171,7 @@ class MarketStateDetector:
         return self.atr_pct
     
     def get_volatility_factor(self) -> float:
-        if self.atr_pct < 0.8:
+        if self.atr_pct < 1.5:
             return 0.93
         elif self.atr_pct < 1.2:
             return 0.96
@@ -328,6 +337,10 @@ class DynamicThreshold:
         self.macro_factor = 1.0
         self.orderflow_factor = 1.0
     
+    def calculate_final_threshold(self) -> int:
+        multiplier = self.volatility_factor * self.trend_factor * self.macro_factor * self.orderflow_factor
+        return int(self.base_threshold * multiplier)
+
     def update_factors(self, market_state: MarketStateDetector, macro_score: int, orderflow_ratio: float = 50.0):
         self.volatility_factor = market_state.get_volatility_factor()
         self.trend_factor = market_state.get_trend_factor()
@@ -415,10 +428,17 @@ import time
 import random
 import math
 import httpx
+import os
+import sys
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+# Add the project root to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from agents.base import BaseAgent
 from simulation.exchange_sim import sim_exchange
+from core.telegram import send_alert_async
 
 
 @dataclass
@@ -582,7 +602,9 @@ class BTCRollingAgent(BaseAgent):
                 await asyncio.sleep(30) # Tick every 30 seconds
                 
             except Exception as e:
-                self.logger.error(f"Error in strategy loop: {e}", exc_info=True)
+                error_msg = f"Error in strategy loop: {e}"
+                self.logger.error(error_msg, exc_info=True)
+                await send_alert_async(f"🚨 [BTCRollingAgent] Loop error: {e}")
                 await asyncio.sleep(10)
     
     def _update_simulated_klines(self, price: float):
@@ -607,11 +629,18 @@ class BTCRollingAgent(BaseAgent):
     
     async def _trade(self, side: str, balance: float, position_percent: float, score: int, target_return: float):
         amount = balance * position_percent / 100
+        # Precision Guard: Binance typically uses 3-5 decimals for BTC
+        amount = round(amount, 4)
+        if amount < 0.0001:  # Absolute Minimum Lot Size check
+            self.logger.warning("trade_skipped_too_small", amount=amount)
+            return
+
         price = sim_exchange.get_price(self.symbol)
         result = await sim_exchange.create_order(self.account_id, self.symbol, side, amount)
         if result["success"]:
             self.last_trade = time.time()
             self.logger.info("v46_trade_executed", side=side, amount=amount, price=price, score=score, target=target_return)
+            await send_alert_async(f"🚀 [BTCRollingAgent] Trade Executed: {side} {amount} {self.symbol} @ {price}")
 
 async def main():
     import asyncio

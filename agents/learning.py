@@ -1,14 +1,18 @@
 import asyncio
 import sqlite3
+import os
 from datetime import datetime, timedelta
 import logging
 
 class LearningAgent:
     def __init__(self, name):
         self.name = name
-        self.db_path = "knowledge.db"
+        # Force correct path in /root/irisquant/data/
+        self.db_path = "/root/irisquant/data/knowledge.db"
         self.logger = logging.getLogger(name)
         logging.basicConfig(level=logging.INFO)
+        # Ensure dir exists
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self._init_db()
 
     def _init_db(self):
@@ -28,6 +32,23 @@ class LearningAgent:
         """)
         conn.commit()
         conn.close()
+
+    def record_trade(self, agent, symbol, side, amount, price, pnl=0):
+        """Persist a trade to SQLite knowledge base"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO trades (agent, symbol, side, amount, price, pnl)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (agent, symbol, side, amount, price, pnl))
+            conn.commit()
+            conn.close()
+            self.logger.info(f"Recorded trade: {agent} {side} {symbol} (amount={amount}, price={price})")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error recording trade: {e}")
+            return False
 
     async def run(self):
         self.logger.info("Learning agent started")
