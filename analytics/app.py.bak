@@ -1,0 +1,62 @@
+from flask import Flask, jsonify, render_template
+from flask_cors import CORS
+import random
+import time
+from datetime import datetime, timedelta
+
+app = Flask(__name__, template_folder='/root/irisquant/analytics/templates')
+CORS(app)
+
+def generate_mock_equity(account_name, start_val, volatility=0.002):
+    """生成最近 72 小时的模拟资金曲线"""
+    data = []
+    current_time = datetime.now()
+    current_val = start_val
+    
+    # 每 15 分钟一个点，总计约 288 个点
+    for i in range(288, -1, -1):
+        timestamp = (current_time - timedelta(minutes=i*15)).strftime('%Y-%m-%d %H:%M:%S')
+        change = current_val * random.uniform(-volatility, volatility * 1.1) # 略微向上偏置
+        current_val += change
+        data.append({
+            "timestamp": timestamp,
+            "equity": round(current_val, 2)
+        })
+    return data
+
+@app.route('/')
+@app.route('/analytics')
+def index():
+    return render_template('analytics.html')
+
+@app.route('/api/analytics/equity/all')
+def get_all_equity():
+    # 账户初始资金配置
+    accounts_config = {
+        "Binance Main": 50000,
+        "OKX Sub1": 30000,
+        "Polymarket": 15000,
+        "Weather Alpha": 5000
+    }
+    
+    results = {}
+    all_series = []
+    
+    # 为每个账户生成曲线
+    for name, start_bal in accounts_config.items():
+        series = generate_mock_equity(name, start_bal)
+        results[name] = series
+        all_series.append(series)
+    
+    # 计算 Overall (总资产)
+    overall = []
+    for i in range(len(all_series[0])):
+        ts = all_series[0][i]['timestamp']
+        total = sum(s[i]['equity'] for s in all_series)
+        overall.append({"timestamp": ts, "equity": round(total, 2)})
+    
+    results["Overall"] = overall
+    return jsonify(results)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8081, debug=True)
