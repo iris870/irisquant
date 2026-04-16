@@ -1,0 +1,10 @@
+[
+  {
+    "marketId": "0x1234567890abcdef",
+    "outcome": "Yes",
+    "amount": 300,
+    "entryPrice": 0.65,
+    "entryTime": "2026-04-09T03:38:58.367Z",
+    "status": "open"
+  }
+]

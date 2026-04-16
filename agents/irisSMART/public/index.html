@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>irisSMART</title>
+<style>
+body{background:#0f0f1a;color:#eee;font-family:sans-serif;margin:0}
+.header{background:#1a1a2e;padding:16px;text-align:center}
+h1{color:#00d4ff;font-size:20px}
+.stats{display:flex;gap:16px;padding:20px;justify-content:center}
+.card{background:#1a1a2e;padding:16px;border-radius:12px;text-align:center;min-width:120px}
+.card .num{font-size:28px;font-weight:bold;color:#00d4ff}
+.tabs{display:flex;gap:8px;padding:0 20px;flex-wrap:wrap}
+.tab-btn{background:#1a1a2e;border:none;padding:10px 20px;color:#aaa;cursor:pointer;border-radius:8px}
+.tab-btn.active{background:#00d4ff;color:#000}
+.tab-content{display:none;padding:20px}
+.tab-content.active{display:block}
+table{width:100%;border-collapse:collapse;background:#1a1a2e;border-radius:12px;overflow:hidden}
+th,td{padding:10px;text-align:left;border-bottom:1px solid #2a2a3e}
+.win{color:#4ade80}.loss{color:#f87171}.pending{color:#ffa500}
+.address{font-family:monospace;font-size:11px}
+.loading{text-align:center;padding:40px;color:#666}
+.bot-card{background:#1a1a2e;padding:16px;border-radius:12px;margin-bottom:20px}
+.bot-row{display:flex;gap:20px;flex-wrap:wrap}
+.bot-stat{flex:1;min-width:100px}
+.bot-stat .label{color:#aaa;font-size:12px}
+.bot-stat .value{font-size:24px;font-weight:bold;color:#00d4ff}
+.refresh-btn{background:#00d4ff;border:none;padding:5px 15px;border-radius:8px;cursor:pointer;margin-left:15px}
+</style>
+</head>
+<body>
+<div class="header"><a href="https://irisquant.ai" style="background:#00d4ff;color:#000;border:none;padding:5px 15px;border-radius:8px;cursor:pointer;margin-right:15px;text-decoration:none;display:inline-block;">← 返回 IrisQuant 主看板</a><h1 style="display:inline-block">📊 irisSMART - 聪明钱监控</h1></div>
+
+<!-- 统计卡片 -->
+<div class="stats">
+<div class="card"><div>监控钱包</div><div class="num" id="walletCount">-</div></div>
+<div class="card"><div>信号总数</div><div class="num" id="signalCount">-</div></div>
+<div class="card"><div>胜率</div><div class="num" id="winRate">-</div></div>
+<div class="card"><div>总盈亏</div><div class="num" id="totalPnl">-</div></div>
+</div>
+
+<!-- Polymarket 机器人状态卡片 -->
+<div class="bot-card" style="margin:0 20px 20px 20px">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px">
+<h3 style="margin:0">🤖 Polymarket 交易机器人</h3>
+<button class="refresh-btn" onclick="loadWallets();loadTrades();loadSignals();">🔄 刷新</button>
+</div>
+<div class="bot-row">
+<div class="bot-stat"><div class="label">💰 USDC余额</div><div class="value" id="botBalance">-</div></div>
+<div class="bot-stat"><div class="label">📊 今日信号</div><div class="value" id="botSignalsToday">-</div></div>
+<div class="bot-stat"><div class="label">✅ 今日交易</div><div class="value" id="botTradesToday">-</div></div>
+<div class="bot-stat"><div class="label">🎯 总交易额</div><div class="value" id="botTotalVolume">-</div></div>
+</div>
+<div style="margin-top:10px;font-size:12px;color:#666" id="botLastUpdate">状态: 运行中</div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('wallets')">聪明钱包</button>
+  <button class="tab-btn" onclick="switchTab('trades')">最近交易</button>
+  <button class="tab-btn" onclick="switchTab('signals')">信号记录</button>
+  <button class="tab-btn" onclick="switchTab('bot-trades')">🤖 机器人交易</button>
+  <button class="tab-btn" onclick="switchTab('bot-signals')">🤖 机器人信号</button>
+</div>
+
+<div id="wallets-tab" class="tab-content active"><div id="walletsContent" class="loading">加载中...</div></div>
+<div id="trades-tab" class="tab-content"><div id="tradesContent" class="loading">加载中...</div></div>
+<div id="signals-tab" class="tab-content"><div id="signalsContent" class="loading">加载中...</div></div>
+<div id="bot-trades-tab" class="tab-content"><div id="botTradesContent" class="loading">加载中...</div></div>
+<div id="bot-signals-tab" class="tab-content"><div id="botSignalsContent" class="loading">加载中...</div></div>
+
+<script>
+const BASE="/smart-money/api/polymarket";
+const BOT_API = '/smart-money/api/polymarket';
+
+function switchTab(tab){
+  document.querySelectorAll('.tab-btn').forEach(btn=>btn.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c=>c.classList.remove('active'));
+  document.getElementById(tab+'-tab').classList.add('active');
+  event.target.classList.add('active');
+}
+
+// 加载 Polymarket 机器人数据
+async function loadPolymarketData() {
+  try {
+    // 获取余额
+    const balanceRes = await fetch(BOT_API+'/balance');
+    const balanceData = await balanceRes.json();
+    if(balanceData.success) {
+      document.getElementById('botBalance').innerText = '$'+balanceData.data.usdc.toFixed(2);
+    }
+    
+    // 获取交易记录
+    const tradesRes = await fetch('/smart-money/api/wallets');
+    const tradesData = await tradesRes.json();
+    if(tradesData.success) {
+      const trades = tradesData.data;
+      const today = new Date().toDateString();
+      const todayTrades = trades.filter(t => new Date(t.timestamp).toDateString() === today);
+      document.getElementById('botTradesToday').innerText = todayTrades.length;
+      
+      const totalVolume = trades.reduce((sum, t) => sum + (t.cost || 0), 0);
+      document.getElementById('botTotalVolume').innerText = '$'+totalVolume.toFixed(2);
+      
+      // 渲染机器人交易表格
+      let html = '<thead><tr><th>时间</th><th>市场</th><th>方向</th><th>数量</th><th>价格</th><th>金额</th><th>状态</th></tr></thead><tbody>';
+      trades.slice(0, 50).forEach(t => {
+        html += `<tr>
+          <td>${new Date(t.timestamp).toLocaleString()}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${t.marketQuestion?.substring(0, 40)||'-'}...</td>
+          <td class="${t.action === 'BUY_YES' ? 'win' : 'loss'}">${t.action === 'BUY_YES' ? '✅ 买入 YES' : '❌ 买入 NO'}</td>
+          <td>${t.amount || '-'}</td>
+          <td>$${(t.price || 0).toFixed(4)}</td>
+          <td>$${(t.cost || 0).toFixed(2)}</td>
+          <td class="win">已执行</td>
+        </tr>`;
+      });
+      html += '</tbody>';
+      document.getElementById('botTradesContent').innerHTML = trades.length ? `<table>${html}</table>` : '<div class="loading">暂无交易记录</div>';
+    }
+    
+    // 获取信号记录
+    const signalsRes = await fetch(BOT_API+'/signals');
+    const signalsData = await signalsRes.json();
+    if(signalsData.success) {
+      const signals = signalsData.data;
+      const today = new Date().toDateString();
+      const todaySignals = signals.filter(s => new Date(s.detectedAt).toDateString() === today);
+      document.getElementById('botSignalsToday').innerText = todaySignals.length;
+      
+      // 渲染机器人信号表格
+      let html = '<thead><tr><th>时间</th><th>市场</th><th>信号</th><th>价格</th><th>置信度</th><th>理由</th><th>状态</th></tr></thead><tbody>';
+      signals.slice(0, 50).forEach(s => {
+        html += `<tr>
+          <td>${new Date(s.detectedAt).toLocaleString()}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${s.marketQuestion?.substring(0, 40)||'-'}...</td>
+          <td class="${s.action === 'BUY_YES' ? 'win' : 'loss'}">${s.action === 'BUY_YES' ? '买入 YES' : '买入 NO'}</td>
+          <td>${(s.price * 100).toFixed(1)}%</td>
+          <td>${(s.confidence * 100).toFixed(0)}%</td>
+          <td style="max-width:200px">${s.reason || '-'}</td>
+          <td class="${s.status === 'executed' ? 'win' : 'pending'}">${s.status === 'executed' ? '已执行' : (s.status === 'pending' ? '待执行' : s.status)}</td>
+        </tr>`;
+      });
+      html += '</tbody>';
+      document.getElementById('botSignalsContent').innerHTML = signals.length ? `<table>${html}</table>` : '<div class="loading">暂无信号记录</div>';
+    }
+    
+    document.getElementById('botLastUpdate').innerHTML = `状态: 运行中 | 最后更新: ${new Date().toLocaleString()}`;
+  } catch(e) {
+    console.error('加载机器人数据失败:', e);
+    document.getElementById('botBalance').innerHTML = '连接中...';
+  }
+}
+
+// 原有函数
+async function loadWallets(){const r=await fetch('/smart-money/api/wallets');const d=await r.json();const w=d.wallets||[];document.getElementById('walletCount').innerText=w.length;if(!w.length){document.getElementById('walletsContent').innerHTML='<div class="loading">暂无数据</div>';return;}
+let html='<thead><tr><th>#</th><th>地址</th><th>胜率</th><th>交易次数</th><th>总盈亏</th></tr></thead><tbody>';
+w.forEach((x,i)=>{html+=`<tr><td>${i+1}</td><td class="address">${x.address.slice(0,10)}...</td><td class="win">${x.winRate.toFixed(1)}%</td><td>${x.numTrades.toLocaleString()}</td><td>$${x.totalPnl.toLocaleString()}</td></tr>`;});
+html+='</tbody>';document.getElementById('walletsContent').innerHTML=`<table>${html}</table>`;}
+async function loadTrades(){const r=await fetch(BASE+'/trades');const d=await r.json();const t=d.data||[];if(!t.length){document.getElementById('tradesContent').innerHTML='<div class="loading">暂无交易</div>';return;}
+let html='<thead><tr><th>时间</th><th>钱包</th><th>方向</th><th>金额</th><th>价格</th></tr></thead><tbody>';
+t.forEach(x=>{html+=`<tr><td>${new Date(x.timestamp).toLocaleString()}</td><td class="address">${x.trader?.slice(0,10)}...</td><td>${x.outcome||'Yes'}</td><td>$${x.amount?.toLocaleString()||'0'}</td><td>$${x.price?.toFixed(4)||'0'}</td></tr>`;});
+html+='</tbody>';document.getElementById('tradesContent').innerHTML=`<table>${html}</table>`;}
+async function loadSignals(){const r=await fetch(BASE+'/signals');const s=await r.json();const signals=s.data||[];document.getElementById('signalCount').innerText=signals.length;if(!signals.length){document.getElementById('signalsContent').innerHTML='<div class="loading">暂无信号</div>';return;}
+const wins=signals.filter(x=>x.isWin===true).length;const resolved=signals.filter(x=>x.resolved).length;const wr=resolved?(wins/resolved*100).toFixed(1):0;const profit=signals.reduce((a,b)=>a+(b.profit||0),0);
+document.getElementById('winRate').innerText=wr+'%';document.getElementById('totalPnl').innerText=profit>=0?`+$${profit.toFixed(2)}`:`-$${Math.abs(profit).toFixed(2)}`;
+let html='<thead><tr><th>时间</th><th>强度</th><th>方向</th><th>总金额</th><th>状态</th><th>盈亏</th></tr></thead><tbody>';
+signals.forEach(x=>{html+=`<tr><td>${new Date(x.detectedAt).toLocaleString()}</td><td>${x.strength||0}</td><td>${x.outcome||'Yes'}</td><td>$${x.totalAmount?.toLocaleString()||'0'}</td><td class="${x.isWin===true?'win':(x.isWin===false?'loss':'pending')}">${x.isWin===true?'盈利':(x.isWin===false?'亏损':'待结算')}</td><td class="${x.profit>=0?'win':'loss'}">${x.profit?(x.profit>=0?`+$${x.profit.toFixed(2)}`:`-$${Math.abs(x.profit).toFixed(2)}`):'-'}</td></tr>`;});
+html+='</tbody>';document.getElementById('signalsContent').innerHTML=`<table>${html}</table>`;}
+async function loadBalance(){const r=await fetch(BOT_API+'/balance');const d=await r.json();if(d.success){document.getElementById('botBalance').innerText='$'+d.data.usdc.toFixed(2);}}
+// 初始化所有数据
+loadWallets();
+loadTrades();
+loadSignals();
+loadBalance();
+    loadPolymarketData();
+// 定时刷新
+setInterval(()=>{loadBalance();loadPolymarketData();loadWallets();loadTrades();loadSignals();},15000);
+    loadPolymarketData();
+</script>
+</body>
+</html>

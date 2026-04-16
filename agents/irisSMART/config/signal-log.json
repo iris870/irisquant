@@ -1,0 +1,19 @@
+[
+  {
+    "signal": {
+      "marketId": "0x1234567890abcdef",
+      "outcome": "Yes",
+      "strength": 5,
+      "totalAmount": 50000,
+      "avgPrice": 0.65,
+      "wallets": [
+        "0xabc...",
+        "0xdef...",
+        "0x123..."
+      ],
+      "timestamp": "2026-04-09T03:38:58.351Z"
+    },
+    "executedAmount": 300,
+    "executedAt": "2026-04-09T03:38:58.367Z"
+  }
+]

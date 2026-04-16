@@ -1,0 +1,99 @@
+import json
+import os
+from datetime import datetime, timedelta
+from core.weather_client import NOAAClient
+from core.adaptive_bias import AdaptiveBiasCorrector
+from core.data_recorder import DataRecorder
+
+class TemperatureDirectionStrategy:
+    def __init__(self, config, clob, logger):
+        self.noaa = NOAAClient()
+        self.clob = clob
+        self.logger = logger
+        self.config = config
+        
+        self.market_id = config.get("DIRECTION_MARKET_ID", "TEMP-DIRECTION-ID")
+        self.station_id = config.get("STATION_ID", "KJFK")
+        self.total_budget = float(config.get("DIRECTION_BUDGET", 50))
+        self.kelly_fraction = float(config.get("KELLY_FRACTION", 0.25))
+        self.min_edge = float(config.get("MIN_EDGE", 0.05))
+        self.max_position = float(config.get("MAX_POSITION_USD", 100))
+        self.history_file = "/root/weather-alpha/data/temp_history.json"
+        
+        self.bias_corrector = AdaptiveBiasCorrector(config)
+        self.recorder = DataRecorder()
+        
+    def _calculate_size(self, prob: float, price: float) -> float:
+        edge = prob - price
+        if edge <= 0 or price >= 1.0:
+            return 0
+        b = (1.0 - price) / price
+        q = 1.0 - prob
+        kelly = (prob * b - q) / b
+        size = self.total_budget * kelly * self.kelly_fraction
+        return max(0, min(size, self.max_position))
+    
+    def _get_yesterday_temperature(self):
+        yesterday_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if os.path.exists(self.history_file):
+            with open(self.history_file, 'r') as f:
+                history = json.load(f)
+                return history.get(yesterday_str)
+        return None
+    
+    def _save_temperature(self, temp):
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        history = {}
+        if os.path.exists(self.history_file):
+            with open(self.history_file, 'r') as f:
+                history = json.load(f)
+        history[today_str] = temp
+        with open(self.history_file, 'w') as f:
+            json.dump(history, f)
+    
+    def run_once(self):
+        today = self.noaa.get_forecast_by_station(self.station_id)
+        if not today:
+            self.logger.warning("[升降温方向] 无法获取今日温度")
+            return
+        
+        today_high = today.get('temp_f')
+        if not today_high:
+            return
+        
+        yesterday_high = self._get_yesterday_temperature()
+        if yesterday_high is None:
+            self._save_temperature(today_high)
+            self.logger.info("[升降温方向] 无昨日数据，已保存今日温度")
+            return
+        
+        is_warmer = today_high > yesterday_high
+        base_prob = 0.65 if is_warmer else 0.35
+        
+        # 使用自适应偏差修正
+        adjusted_prob = self.bias_corrector.get_adjusted_prob(
+            "temp_direction", self.station_id, base_prob
+        )
+        
+        market_price = self.clob.get_market_price(self.market_id, 'YES')
+        edge = adjusted_prob - market_price
+        
+        # 记录预测
+        self.recorder.record_prediction(
+            "temp_direction", self.market_id, adjusted_prob, market_price,
+            {"today": today_high, "yesterday": yesterday_high, "is_warmer": is_warmer}
+        )
+        
+        self.logger.info(f"[升降温方向] 今日{today_high}°F vs 昨日{yesterday_high}°F, 升温:{is_warmer}, 概率={adjusted_prob:.1%}, 市价={market_price:.1%}, 优势={edge:.1%}")
+        
+        if edge >= self.min_edge:
+            size = self._calculate_size(adjusted_prob, market_price)
+            if size >= 5.0:
+                self.logger.info(f"[升降温方向] ✅ 买入YES: 金额=${size:.2f}")
+                self.recorder.record_order(
+                    "temp_direction", self.market_id, "YES",
+                    size, market_price + 0.01, adjusted_prob, market_price
+                )
+                self.clob.place_order(self.market_id, "YES", size, market_price + 0.01)
+        
+        self._save_temperature(today_high)

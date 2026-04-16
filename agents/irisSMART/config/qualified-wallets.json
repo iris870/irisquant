@@ -1,0 +1,54 @@
+{
+  "lastUpdated": "2026-04-14T11:00:00Z",
+  "count": 6,
+  "wallets": [
+    {
+      "address": "0x15ceffed7bf820cd2d90f90ea24ae9909f5cd5fa",
+      "winRate": 85.7,
+      "numTrades": 3000,
+      "totalPnl": 48000,
+      "note": "HondaCivic - 天气赛道",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    },
+    {
+      "address": "0x331bf91c132af9d921e1908ca0979363fc47193f",
+      "winRate": 67.0,
+      "numTrades": 247,
+      "totalPnl": 49000,
+      "note": "BeefSlayer - 专注NYC/Chicago",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    },
+    {
+      "address": "0x1838cca016850ac7185a9b149fe7d0bd2d6629b4",
+      "winRate": 60.0,
+      "numTrades": 2100,
+      "totalPnl": 77000,
+      "note": "JoeTheMeteorologist",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    },
+    {
+      "address": "0x57ee70867b4e387de9de34fd62bc685aa02a8112",
+      "winRate": 38.0,
+      "numTrades": 3300,
+      "totalPnl": 50000,
+      "note": "ikik111 - 高频铺量",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    },
+    {
+      "address": "0xd75d96a23515172778d3281f53c9180b985100c8",
+      "winRate": 78.0,
+      "numTrades": 84,
+      "totalPnl": 20000,
+      "note": "Varyage - 专注NYC",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    },
+    {
+      "address": "0xbacd00c9080a82ded56f504ee8810af732b0ab35",
+      "winRate": 58.8,
+      "numTrades": 100,
+      "totalPnl": 1300000,
+      "note": "ScottyNooo - 政治赛道",
+      "qualifiedAt": "2026-04-14T11:00:00Z"
+    }
+  ]
+}

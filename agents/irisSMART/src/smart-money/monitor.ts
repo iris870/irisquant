@@ -1,0 +1,203 @@
+import axios from 'axios';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { SignalStatsReporter } from '../stats/reporter';
+
+interface QualifiedWallet {
+  address: string;
+  winRate: number;
+  numTrades: number;
+  totalPnl: number;
+  profitFactor: number;
+}
+
+interface Trade {
+  id: string;
+  trader: string;
+  marketId: string;
+  outcome: string;
+  amount: number;
+  price: number;
+  timestamp: string;
+  transactionHash: string;
+}
+
+class SmartMoneyMonitor {
+  private readonly qualifiedWallets: QualifiedWallet[] = [];
+  private lastCheckTime: Date = new Date();
+  private readonly checkInterval: number = 60000;
+  private readonly tradesHistory: Trade[] = [];
+  private readonly statsReporter: SignalStatsReporter;
+
+  constructor() {
+    this.statsReporter = new SignalStatsReporter();
+    this.loadQualifiedWallets();
+  }
+
+  private loadQualifiedWallets(): void {
+    const filePath = path.join(__dirname, '../../config/qualified-wallets.json');
+    if (fs.existsSync(filePath)) {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+      this.qualifiedWallets = data.wallets;
+      console.log(`📋 加载了 ${this.qualifiedWallets.length} 个聪明钱钱包\n`);
+    } else {
+      console.log('⚠️ 未找到合格钱包文件，请先运行扫描器\n');
+    }
+  }
+
+  async startMonitoring(): Promise<void> {
+    console.log('='.repeat(60));
+    console.log('📡 聪明钱实时监控启动');
+    console.log(`⏰ 启动时间: ${new Date().toLocaleString()}`);
+    console.log(`🔄 检查间隔: ${this.checkInterval / 1000} 秒`);
+    console.log(`👛 监控钱包: ${this.qualifiedWallets.length} 个`);
+    console.log('='.repeat(60) + '\n');
+
+    await this.checkNewTrades();
+
+    setInterval(async () => {
+      await this.checkNewTrades();
+    }, this.checkInterval);
+  }
+
+  private async checkNewTrades(): Promise<void> {
+    console.log(`\n🔍 [${new Date().toLocaleTimeString()}] 检查新交易...`);
+
+    const walletAddresses = this.qualifiedWallets.map(w => w.address);
+    if (walletAddresses.length === 0) {
+      console.log('⚠️ 没有监控钱包');
+      return;
+    }
+
+    const since = Math.floor(this.lastCheckTime.getTime() / 1000);
+    this.lastCheckTime = new Date();
+    
+    try {
+      // 使用官方 Data API
+      const url = `https://data-api.polymarket.com/trades?limit=100&timestamp_gt=${since}`;
+      const response = await axios.get(url);
+      const allTrades = response.data || [];
+      
+      // 过滤出监控钱包的交易
+      const filteredTrades = allTrades.filter((trade: any) => 
+        walletAddresses.some(addr => addr.toLowerCase() === trade.proxyWallet?.toLowerCase())
+      );
+      
+      if (filteredTrades.length > 0) {
+        // 转换为统一格式
+        const formattedTrades = filteredTrades.map((trade: any) => ({
+          id: trade.transactionHash,
+          trader: trade.proxyWallet,
+          marketId: trade.conditionId?.split('-')[0] || '',
+          outcome: trade.outcome === 'Yes' ? 'YES' : 'NO',
+          amount: trade.size,
+          price: trade.price,
+          timestamp: trade.timestamp,
+          transactionHash: trade.transactionHash
+        }));
+        this.processNewTrades(formattedTrades);
+      }
+    } catch (error) {
+      console.error(`❌ 获取交易失败:`, error instanceof Error ? error.message : error);
+    }
+  }
+    
+    for (const trade of trades) {
+      const wallet = this.qualifiedWallets.find(w => w.address.toLowerCase() === trade.trader.toLowerCase());
+      
+      const tradeInfo: Trade = {
+        id: trade.id,
+        trader: trade.trader,
+        marketId: trade.marketId,
+        outcome: trade.outcome,
+        amount: trade.amount / 1e6,
+        price: trade.price,
+        timestamp: new Date(Number.parseInt(trade.timestamp) * 1000).toLocaleString(),
+        transactionHash: trade.transactionHash
+      };
+      
+      this.tradesHistory.push(tradeInfo);
+      this.printTradeAlert(tradeInfo, wallet);
+      this.saveTradeToFile(tradeInfo);
+    }
+    
+    this.checkSignals();
+  }
+
+  private printTradeAlert(trade: Trade, wallet?: QualifiedWallet): void {
+    console.log('🚨 '.repeat(10));
+    console.log(`🔥 聪明钱交易警报！`);
+    console.log(`👛 钱包: ${trade.trader.slice(0, 10)}...${trade.trader.slice(-6)}`);
+    if (wallet) {
+      console.log(`📈 胜率: ${wallet.winRate.toFixed(1)}% | PnL: $${(wallet.totalPnl).toLocaleString()}`);
+    }
+    console.log(`📊 市场: ${trade.marketId.slice(0, 20)}...`);
+    console.log(`🎲 方向: ${trade.outcome}`);
+    console.log(`💰 金额: $${trade.amount.toLocaleString()}`);
+    console.log(`💵 价格: $${trade.price.toFixed(4)}`);
+    console.log(`⏰ 时间: ${trade.timestamp}`);
+    console.log(`🔗 Tx: ${trade.transactionHash.slice(0, 16)}...`);
+    console.log('🚨 '.repeat(10) + '\n');
+  }
+
+  private saveTradeToFile(trade: Trade): void {
+    const tradesFile = path.join(__dirname, '../../config/recent-trades.json');
+    let trades: Trade[] = [];
+    
+    if (fs.existsSync(tradesFile)) {
+      trades = JSON.parse(fs.readFileSync(tradesFile, 'utf-8'));
+    }
+    
+    trades.unshift(trade);
+    if (trades.length > 1000) trades = trades.slice(0, 1000);
+    
+    fs.writeFileSync(tradesFile, JSON.stringify(trades, null, 2));
+  }
+
+  private checkSignals(): void {
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    const recentTrades = this.tradesHistory.filter(t => 
+      new Date(t.timestamp).getTime() > fiveMinutesAgo
+    );
+    
+    const marketGroups: { [key: string]: Trade[] } = {};
+    for (const trade of recentTrades) {
+      const key = `${trade.marketId}_${trade.outcome}`;
+      if (!marketGroups[key]) marketGroups[key] = [];
+      marketGroups[key].push(trade);
+    }
+    
+    for (const [key, trades] of Object.entries(marketGroups)) {
+      if (trades.length >= 3) {
+        const [marketId, outcome] = key.split('_');
+        const totalAmount = trades.reduce((sum, t) => sum + t.amount, 0);
+        
+        console.log('💪 '.repeat(10));
+        console.log(`🎯 强信号检测！`);
+        console.log(`📊 ${trades.length} 个聪明钱同时交易`);
+        console.log(`🎲 方向: ${outcome}`);
+        console.log(`💰 总金额: $${totalAmount.toLocaleString()}`);
+        console.log(`👛 参与钱包: ${trades.map(t => t.trader.slice(0, 8)).join(', ')}`);
+        console.log('💪 '.repeat(10) + '\n');
+        
+        this.statsReporter.saveSignal({
+          marketId: marketId,
+          marketQuestion: marketId,
+          outcome: outcome,
+          strength: trades.length,
+          totalAmount: totalAmount,
+          avgPrice: totalAmount / trades.length,
+          wallets: trades.map(t => t.trader),
+          timestamp: new Date()
+        });
+      }
+    }
+  }
+}
+
+if (require.main === module) {
+  const monitor = new SmartMoneyMonitor();
+  monitor.startMonitoring().catch(console.error);
+}
+
+export { SmartMoneyMonitor, Trade };

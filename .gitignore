@@ -40,3 +40,10 @@ knowledge.db
 logs/
 temp/
 backup/
+agents/weather-alpha-bot/venv/
+agents/weather-alpha-bot/__pycache__/
+agents/weather-alpha-bot/*.bak
+agents/weather-alpha-bot/*.backup
+agents/irisSMART/node_modules/
+agents/irisSMART/dist/
+agents/irisSMART/logs/
