@@ -57,12 +57,11 @@ class BinanceClient:
     async def get_klines(self, symbol: str, interval: str, limit: int = 100) -> List[KLine]:
         """Get klines from Binance"""
         clean_symbol = symbol.replace("/", "").upper()
-        binance_interval = interval
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.get(
                     f"{self.base_url}/api/v3/klines", 
-                    params={"symbol": clean_symbol, "interval": binance_interval, "limit": limit}
+                    params={"symbol": clean_symbol, "interval": interval, "limit": limit}
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -248,40 +247,8 @@ class ScoringSystem:
     def score_ob(self, klines_by_interval: Dict[str, List[KLine]]) -> int:
         self.ob_detector.klines = klines_by_interval
         score = self.ob_detector.get_ob_score()
-        
-        # 从1小时K线计算EMA和RSI
-        klines_1h = klines_by_interval.get("1h", [])
-        if len(klines_1h) >= 50:
-            closes = [k.close for k in klines_1h[-50:]]
-            latest = klines_1h[-1]
-            ema20 = self._ema(closes[-20:], 20) if len(closes) >= 20 else closes[-1]
-            ema50 = self._ema(closes, 50)
-            market_state = "trend" if ema20 > ema50 else "ranging"
-            
-            if ema20 > ema50:
-                ema_score = 15
-                if market_state == "trend":
-                    ema_score += 5
-                score += ema_score
-            
-            rsi = self._calculate_rsi(closes)
-            if market_state == "trend":
-                if rsi < 40:
-                    score += 20
-                elif rsi < 50:
-                    score += 10
-            
-            if len(closes) >= 20:
-                sma20 = sum(closes[-20:]) / 20
-                std = (sum((c - sma20) ** 2 for c in closes[-20:]) / 20) ** 0.5
-                if sma20 - std < latest.close < sma20:
-                    boll_score = 15
-                    if market_state == "ranging":
-                        boll_score += 10
-                    score += boll_score
-        
-        self.scores["ob"] = min(score, 80)
-        return self.scores["ob"]
+        self.scores["ob"] = score
+        return score
     
     def score_tech(self, klines: List[KLine], market_state: str = "trend") -> int:
         if len(klines) < 50:
@@ -368,10 +335,6 @@ class DynamicThreshold:
         self.macro_factor = 1.0
         self.orderflow_factor = 1.0
     
-    def calculate_final_threshold(self) -> int:
-        multiplier = self.volatility_factor * self.trend_factor * self.macro_factor * self.orderflow_factor
-        return int(self.base_threshold * multiplier)
-
     def update_factors(self, market_state: MarketStateDetector, macro_score: int, orderflow_ratio: float = 50.0):
         self.volatility_factor = market_state.get_volatility_factor()
         self.trend_factor = market_state.get_trend_factor()
@@ -530,57 +493,77 @@ class BTCRollingAgent(BaseAgent):
                                 if pos_size_pct > 0:
                                     await self._trade("buy", current_balance["total"], pos_size_pct, total_score, target_return)
                     else:
-                        # ========== 阶梯式分批止盈 + 回撤保护卖出逻辑 ==========
+                        # ========== 阶梯式分批止盈卖出逻辑（无止损）==========
                         position = sim_exchange.accounts[self.account_id].position
-                        if position is None:
-                            pass
-                        else:
-                            entry_price = position.entry_price
-                            current_price = price
+                        current_price = price
+                        entry_price = position.entry_price if position else 0
+                        
+                        if entry_price > 0:
                             pnl_pct = (current_price - entry_price) / entry_price * 100
+                        else:
+                            pnl_pct = 0
+                        
+                        if not hasattr(self, '_max_profit_pct'):
+                            self._max_profit_pct = 0
+                        if pnl_pct > self._max_profit_pct:
+                            self._max_profit_pct = pnl_pct
+                        
+                        should_sell = False
+                        sell_percent = 0
+                        sell_reason = ""
+                        
+                        # 第一阶梯：盈利 5%，卖出 30%
+                        if pnl_pct >= 5.0 and not getattr(self, '_step1_done', False):
+                            should_sell = True
+                            sell_percent = 30
+                            sell_reason = f"take_profit_5% (+{pnl_pct:.1f}%)"
+                            self._step1_done = True
+                        
+                        # 第二阶梯：盈利 7%，卖出 40%
+                        elif pnl_pct >= 7.0 and not getattr(self, '_step2_done', False):
+                            should_sell = True
+                            sell_percent = 40
+                            sell_reason = f"take_profit_7% (+{pnl_pct:.1f}%)"
+                            self._step2_done = True
+                        
+                        # 第三阶梯：盈利 10%，卖出 30%
+                        elif pnl_pct >= 10.0 and not getattr(self, '_step3_done', False):
+                            should_sell = True
+                            sell_percent = 30
+                            sell_reason = f"take_profit_10% (+{pnl_pct:.1f}%)"
+                            self._step3_done = True
+                        
+                        # 回撤保护：曾经到过 7% 以上，回落到 5% 以下，全卖
+                        elif self._max_profit_pct >= 7.0 and pnl_pct <= 5.0:
+                            if not getattr(self, '_exit_protection_done', False):
+                                should_sell = True
+                                sell_percent = 100
+                                sell_reason = f"pullback_protection ({self._max_profit_pct:.1f}% → {pnl_pct:.1f}%)"
+                                self._exit_protection_done = True
+                        
+                        # 回撤保护：曾经到过 10% 以上，回落到 7% 以下，全卖
+                        elif self._max_profit_pct >= 10.0 and pnl_pct <= 7.0:
+                            if not getattr(self, '_exit_protection_done', False):
+                                should_sell = True
+                                sell_percent = 100
+                                sell_reason = f"pullback_protection ({self._max_profit_pct:.1f}% → {pnl_pct:.1f}%)"
+                                self._exit_protection_done = True
+                        
+                        if should_sell and sell_percent > 0:
+                            amount_to_sell = position.amount * sell_percent / 100
+                            await self._trade("sell", amount_to_sell, sell_percent, total_score, None)
+                            self.logger.info(f"✅ 卖出 | {sell_reason} | 卖出比例: {sell_percent}%")
+                            await send_alert_async(f"✅ [BTC滚仓] {sell_reason} | 卖出: {sell_percent}%")
                             
-                            if not hasattr(self, '_max_profit_pct'):
+                            if sell_percent == 100:
+                                self._step1_done = False
+                                self._step2_done = False
+                                self._step3_done = False
+                                self._exit_protection_done = False
                                 self._max_profit_pct = 0
-                            if pnl_pct > self._max_profit_pct:
-                                self._max_profit_pct = pnl_pct
-                            
-                            remaining_amount = position.amount
-                            sold = False
-                            
-                            # 规则1: 从7%以上回落到5.5% → 全卖
-                            if self._max_profit_pct >= 7 and pnl_pct <= 5.5:
-                                await self._trade("sell", remaining_amount, 100, 0, 0)
-                                self.logger.info("exit_drawdown_7_to_5.5", max_profit=self._max_profit_pct, current_pnl=pnl_pct)
-                                self._max_profit_pct = 0
-                                sold = True
-                            
-                            # 规则2: 从10%以上回落到7.5% → 全卖
-                            elif self._max_profit_pct >= 10 and pnl_pct <= 7.5:
-                                await self._trade("sell", remaining_amount, 100, 0, 0)
-                                self.logger.info("exit_drawdown_10_to_7.5", max_profit=self._max_profit_pct, current_pnl=pnl_pct)
-                                self._max_profit_pct = 0
-                                sold = True
-                            
-                            # 规则3: 阶梯止盈（只在上涨过程中触发）
-                            if not sold and pnl_pct >= 10 and remaining_amount > 0:
-                                sell_amount = remaining_amount * 0.3
-                                await self._trade("sell", sell_amount, 100, 0, 0)
-                                self.logger.info("take_profit_10pct", sell_amount=sell_amount, remaining=remaining_amount - sell_amount)
-                                sold = True
-                            
-                            elif not sold and pnl_pct >= 7 and remaining_amount > 0:
-                                sell_amount = remaining_amount * 0.4
-                                await self._trade("sell", sell_amount, 100, 0, 0)
-                                self.logger.info("take_profit_7pct", sell_amount=sell_amount, remaining=remaining_amount - sell_amount)
-                                sold = True
-                            
-                            elif not sold and pnl_pct >= 5 and remaining_amount > 0:
-                                sell_amount = remaining_amount * 0.3
-                                await self._trade("sell", sell_amount, 100, 0, 0)
-                                self.logger.info("take_profit_5pct", sell_amount=sell_amount, remaining=remaining_amount - sell_amount)
-                                sold = True
-                            
-                            # 规则4: 一直没涨到5% → 不卖，继续持有（什么都不做）
+                        else:
+                            if not hasattr(self, '_entry_time') or self._entry_time is None:
+                                self._entry_time = time.time()
 
                 await asyncio.sleep(30)
                 
@@ -590,32 +573,21 @@ class BTCRollingAgent(BaseAgent):
                 await send_alert_async(f"🚨 [BTCRollingAgent] Loop error: {e}")
                 await asyncio.sleep(10)
     
-    def _update_simulated_klines(self, price: float):
-        timestamp = int(time.time())
-        for interval in ['1m', '5m', '15m', '1h']:
-            kline = KLine(
-                symbol=self.symbol,
-                interval=interval,
-                timestamp=timestamp,
-                open=price * 0.999,
-                high=price * 1.002,
-                low=price * 0.998,
-                close=price,
-                volume=random.uniform(10, 100)
-            )
-            self.market_klines[interval].append(kline)
-            if len(self.market_klines[interval]) > 200:
-                self.market_klines[interval] = self.market_klines[interval][-200:]
-    
     def _has_position(self) -> bool:
         return sim_exchange.accounts[self.account_id].position is not None
     
     async def _trade(self, side: str, balance: float, position_percent: float, score: int, target_return: float):
-        amount = balance * position_percent / 100
-        amount = round(amount, 4)
-        if amount < 0.0001:
-            self.logger.warning("trade_skipped_too_small", amount=amount)
-            return
+        if side == "buy":
+            amount = balance * position_percent / 100
+            amount = round(amount, 4)
+            if amount < 0.0001:
+                self.logger.warning("trade_skipped_too_small", amount=amount)
+                return
+        else:
+            amount = round(balance, 4)
+            if amount < 0.0001:
+                self.logger.warning("sell_skipped_no_position", amount=amount)
+                return
 
         price = sim_exchange.get_price(self.symbol)
         result = await sim_exchange.create_order(self.account_id, self.symbol, side, amount)

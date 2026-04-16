@@ -1,0 +1,442 @@
+#!/usr/bin/env python3
+"""
+宏观策略 v2.0 - 真实数据源
+监控：美联储利率、美国大选、地缘冲突、政策决策
+数据源：Polymarket Gamma API + NewsAPI + FRED API
+"""
+
+import sys
+sys.path.insert(0, "/root/irisquant")
+
+import asyncio
+import aiohttp
+import logging
+import json
+import os
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+from core.real_clob import get_real_trader
+
+# 加载环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv("/root/irisquant/.env")
+except ImportError:
+    pass
+
+
+class MacroTrader:
+    def __init__(self):
+        self.running = True
+        self.logger = self._setup_logger()
+        
+        # API 端点
+        self.gamma_api = "https://gamma-api.polymarket.com"
+        
+        # 配置参数
+        self.min_edge = 0.05      # 最小偏差 5%
+        self.max_position = 50   # 单笔最大 200 USDC
+        self.scan_interval = 1800 # 30分钟扫描一次
+        self.sentiment_weight = 0.3
+        self.poll_weight = 0.2
+        
+        # 账户配置
+        self.account_id = "C"
+        
+        # 统计数据
+        self.trades_executed = 0
+        self.opportunities = 0
+        
+        # API Keys（从环境变量读取）
+        self.newsapi_key = os.getenv("NEWSAPI_KEY", "")
+        self.fred_api_key = os.getenv("FRED_API_KEY", "")
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+        
+        # 监控分类
+        self.categories = {
+            'fed_rate': {
+                'keywords': ['fed', 'federal reserve', 'interest rate', 'fomc', 'rate hike', 'rate cut'],
+                'strategy': 'price_threshold'
+            },
+            'election': {
+                'keywords': ['election', 'president', 'trump', 'biden', 'house', 'senate'],
+                'strategy': 'multi_factor'
+            },
+            'conflict': {
+                'keywords': ['war', 'ceasefire', 'peace', 'attack', 'invasion', 'sanction'],
+                'strategy': 'sentiment'
+            },
+            'policy': {
+                'keywords': ['stimulus', 'infrastructure', 'regulation', 'sec', 'tax'],
+                'strategy': 'price_threshold'
+            }
+        }
+        
+    def _setup_logger(self):
+        logger = logging.getLogger("macro-trader")
+        logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+        logger.addHandler(handler)
+        return logger
+    
+    # ========== 真实数据源 ==========
+    
+    async def fetch_sentiment(self, session: aiohttp.ClientSession, topic: str) -> float:
+        """
+        获取情感分数 - 使用 NewsAPI
+        返回 -0.5 到 0.5 之间的值
+        """
+        if not self.newsapi_key:
+            # 无 API Key 时返回中性
+            return 0.0
+        
+        try:
+            # 搜索相关新闻
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": f"{topic} crypto OR bitcoin",
+                "language": "en",
+                "sortBy": "relevancy",
+                "pageSize": 50,
+                "apiKey": self.newsapi_key
+            }
+            
+            async with session.get(url, params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    articles = data.get("articles", [])
+                    
+                    if not articles:
+                        return 0.0
+                    
+                    # 简单情感分析：计算标题中的正面/负面词汇
+                    positive_words = ['surge', 'gain', 'rise', 'up', 'positive', 'bullish', 'approve', 'support']
+                    negative_words = ['drop', 'fall', 'down', 'negative', 'bearish', 'reject', 'oppose', 'crash']
+                    
+                    positive_count = 0
+                    negative_count = 0
+                    
+                    for article in articles[:30]:
+                        title = article.get("title", "").lower()
+                        for word in positive_words:
+                            if word in title:
+                                positive_count += 1
+                        for word in negative_words:
+                            if word in title:
+                                negative_count += 1
+                    
+                    total = positive_count + negative_count
+                    if total == 0:
+                        return 0.0
+                    
+                    sentiment = (positive_count - negative_count) / total
+                    return max(-0.5, min(0.5, sentiment))
+                    
+        except Exception as e:
+            self.logger.error(f"情感分析失败: {e}")
+        
+        return 0.0
+    
+    async def fetch_poll_data(self, session: aiohttp.ClientSession, topic: str) -> Dict:
+        """
+        获取民调数据 - 使用 FiveThirtyEight 数据（通过 GitHub 镜像）
+        """
+        try:
+            # 使用 FiveThirtyEight 的公开数据
+            url = "https://projects.fivethirtyeight.com/polls-page/data/president_primary_polls.csv"
+            
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    text = await resp.text()
+                    lines = text.split('\n')
+                    
+                    # 简单解析最新民调
+                    latest_polls = []
+                    for line in lines[1:100]:  # 只取前100行
+                        if '"2024"' in line or '"2025"' in line or '"2026"' in line:
+                            parts = line.split(',')
+                            if len(parts) > 10:
+                                candidate = parts[2].strip('"') if len(parts) > 2 else ""
+                                pct = parts[8].strip('"') if len(parts) > 8 else "0"
+                                if candidate and pct.replace('.', '').isdigit():
+                                    latest_polls.append((candidate, float(pct)))
+                    
+                    if latest_polls:
+                        # 取前两名
+                        top_candidates = sorted(latest_polls, key=lambda x: x[1], reverse=True)[:2]
+                        return {
+                            'candidate_a': top_candidates[0][1] if len(top_candidates) > 0 else 50,
+                            'candidate_b': top_candidates[1][1] if len(top_candidates) > 1 else 50,
+                            'undecided': max(0, 100 - sum(p[1] for p in top_candidates[:2])),
+                            'trend': 'stable'
+                        }
+                        
+        except Exception as e:
+            self.logger.error(f"民调数据获取失败: {e}")
+        
+        # 返回模拟数据作为后备
+        return {
+            'candidate_a': 50.0,
+            'candidate_b': 50.0,
+            'undecided': 0.0,
+            'trend': 'stable'
+        }
+    
+    async def fetch_economic_data(self, session: aiohttp.ClientSession, indicator: str) -> float:
+        """
+        获取经济数据 - 使用 FRED API
+        """
+        if not self.fred_api_key:
+            return 50.0
+        
+        try:
+            # FRED API 端点
+            series_map = {
+                'fed_rate': 'FEDFUNDS',      # 联邦基金利率
+                'inflation': 'CPIAUCSL',      # CPI
+                'gdp': 'GDP',                  # GDP
+                'unemployment': 'UNRATE'       # 失业率
+            }
+            
+            series_id = series_map.get(indicator, 'FEDFUNDS')
+            url = f"https://api.stlouisfed.org/fred/series/observations"
+            params = {
+                "series_id": series_id,
+                "api_key": self.fred_api_key,
+                "file_type": "json",
+                "sort_order": "desc",
+                "limit": 1
+            }
+            
+            async with session.get(url, params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    observations = data.get("observations", [])
+                    if observations:
+                        value = observations[0].get("value")
+                        if value and value != ".":
+                            return float(value)
+                            
+        except Exception as e:
+            self.logger.error(f"经济数据获取失败: {e}")
+        
+        return 50.0
+    
+    # ========== 市场数据获取（真实） ==========
+    
+    async def get_macro_markets(self, session: aiohttp.ClientSession):
+        """获取宏观相关市场 - 使用 Polymarket Gamma API"""
+        try:
+            url = f"{self.gamma_api}/markets?active=true&limit=200"
+            async with session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    markets = await resp.json()
+                    macro_markets = []
+                    
+                    for m in markets:
+                        q = m.get('question', '').lower()
+                        
+                        # 判断属于哪个分类
+                        category = None
+                        for cat_name, cat_info in self.categories.items():
+                            if any(k in q for k in cat_info['keywords']):
+                                category = cat_name
+                                break
+                        
+                        if category:
+                            # 解析价格
+                            prices_raw = m.get('outcomePrices', '["0.5", "0.5"]')
+                            if isinstance(prices_raw, str):
+                                try:
+                                    prices = json.loads(prices_raw)
+                                except:
+                                    prices = [0.5, 0.5]
+                            else:
+                                prices = prices_raw
+                            
+                            yes_price = float(prices[0]) if prices else 0.5
+                            
+                            if 0.01 < yes_price < 0.99:
+                                macro_markets.append({
+                                    'slug': m.get('slug'),
+                                    'question': m.get('question'),
+                                    'yes_price': yes_price,
+                                    'category': category,
+                                    'volume': m.get('volume', 0),
+                                    'end_date': m.get('endDate')
+                                })
+                    
+                    return macro_markets
+        except Exception as e:
+            self.logger.error(f"获取市场失败: {e}")
+        return []
+    
+    # ========== 策略引擎 ==========
+    
+    def calculate_position_size(self, confidence: float, balance: float = 10000) -> float:
+        if confidence <= self.min_edge:
+            return 0
+        kelly = confidence * 0.5
+        size = balance * kelly
+        return min(size, self.max_position)
+    
+    async def analyze_price_threshold(self, market: Dict, session: aiohttp.ClientSession) -> Tuple[Optional[str], float, float, str]:
+        """价格阈值策略 + 经济数据验证"""
+        yes_price = market['yes_price']
+        
+        # 获取经济数据验证
+        fed_rate = await self.fetch_economic_data(session, 'fed_rate')
+        
+        if yes_price < 0.3:
+            edge = 0.3 - yes_price
+            # 如果利率高，加息概率低，加成
+            if fed_rate > 5:
+                edge *= 1.2
+            if edge > self.min_edge:
+                return 'YES', edge, yes_price, f"价格偏低({yes_price:.3f}) + 利率{fed_rate:.1f}%"
+        
+        elif yes_price > 0.7:
+            edge = yes_price - 0.7
+            if fed_rate < 3:
+                edge *= 1.2
+            if edge > self.min_edge:
+                return 'NO', edge, 1 - yes_price, f"价格偏高({yes_price:.3f}) + 利率{fed_rate:.1f}%"
+        
+        return None, 0, 0, ""
+    
+    async def analyze_multi_factor(self, market: Dict, session: aiohttp.ClientSession) -> Tuple[Optional[str], float, float, str]:
+        """多因子策略 + 真实新闻情感"""
+        yes_price = market['yes_price']
+        topic = market['question'].split('?')[0]
+        
+        # 获取真实数据
+        sentiment = await self.fetch_sentiment(session, topic)
+        poll = await self.fetch_poll_data(session, topic)
+        
+        # 综合得分
+        base_score = 0.5
+        sentiment_impact = sentiment * self.sentiment_weight
+        poll_impact = (poll.get('candidate_a', 50) - 50) / 100 * self.poll_weight
+        
+        total_score = base_score + sentiment_impact + poll_impact
+        total_score = max(0.1, min(0.9, total_score))
+        
+        edge = total_score - yes_price
+        
+        if edge > self.min_edge:
+            direction = 'YES' if total_score > yes_price else 'NO'
+            price = yes_price if direction == 'YES' else 1 - yes_price
+            reason = f"综合{total_score:.2f} vs 市价{yes_price:.3f} | 情感:{sentiment:.2f} | 民调:{poll.get('candidate_a', 50):.0f}"
+            return direction, edge, price, reason
+        
+        return None, 0, 0, ""
+    
+    async def analyze_sentiment(self, market: Dict, session: aiohttp.ClientSession) -> Tuple[Optional[str], float, float, str]:
+        """情感策略 + 真实新闻"""
+        yes_price = market['yes_price']
+        topic = market['question'].split('?')[0]
+        
+        sentiment = await self.fetch_sentiment(session, topic)
+        
+        if sentiment > 0.4 and yes_price < 0.5:
+            edge = sentiment - yes_price
+            if edge > self.min_edge:
+                return 'YES', edge, yes_price, f"正面情感({sentiment:.2f}) + 价格偏低({yes_price:.3f})"
+        
+        elif sentiment < -0.4 and yes_price > 0.5:
+            edge = (yes_price - 0.5) + abs(sentiment)
+            if edge > self.min_edge:
+                return 'NO', edge, 1 - yes_price, f"负面情感({sentiment:.2f}) + 价格偏高({yes_price:.3f})"
+        
+        return None, 0, 0, ""
+    
+    async def analyze_and_trade(self, market: Dict, session: aiohttp.ClientSession):
+        """分析并交易"""
+        category = market['category']
+        strategy = self.categories[category]['strategy']
+        
+        if strategy == 'price_threshold':
+            direction, edge, price, reason = await self.analyze_price_threshold(market, session)
+        elif strategy == 'multi_factor':
+            direction, edge, price, reason = await self.analyze_multi_factor(market, session)
+        elif strategy == 'sentiment':
+            direction, edge, price, reason = await self.analyze_sentiment(market, session)
+        else:
+            return False
+        
+        if direction and edge > self.min_edge:
+            size = self.calculate_position_size(edge)
+            if size >= 10:
+                await self.execute_trade(market, direction, size, price, reason)
+                return True
+        
+        return False
+    
+    async def execute_trade(self, market: Dict, direction: str, size: float, price: float, reason: str):
+        """执行交易 - 接入模拟交易所"""
+        symbol = "YES" if direction == "YES" else "NO"
+        result = await get_real_trader().place_limit_order(self.account_id, symbol, "buy", size)
+        if result["success"]:
+            self.logger.info(f"📈 执行交易: {market['slug']}")
+            self.logger.info(f"   分类: {market['category']}")
+            self.logger.info(f"   方向: {direction} | 金额: ${size:.2f} @ {price:.3f}")
+            self.logger.info(f"   原因: {reason}")
+        else:
+            self.logger.info(f"❌ 交易失败: {market['slug']} | 原因: {result}")
+        self.trades_executed += 1
+    
+    # ========== 主循环 ==========
+    
+    async def run(self):
+        self.logger.info("=" * 60)
+        self.logger.info("宏观策略启动 v2.0（真实数据源）")
+        self.logger.info(f"监控分类: {list(self.categories.keys())}")
+        self.logger.info(f"最小偏差: {self.min_edge*100:.0f}%")
+        self.logger.info(f"单笔上限: ${self.max_position}")
+        self.logger.info(f"扫描间隔: {self.scan_interval}s")
+        self.logger.info("=" * 60)
+        self.logger.info("📡 数据源状态:")
+        self.logger.info(f"   Polymarket Gamma API: ✅ 已配置")
+        self.logger.info(f"   NewsAPI: {'✅ 已配置' if self.newsapi_key else '❌ 未配置（将使用模拟数据）'}")
+        self.logger.info(f"   FRED API: {'✅ 已配置' if self.fred_api_key else '❌ 未配置（将使用模拟数据）'}")
+        self.logger.info("=" * 60)
+        
+        async with aiohttp.ClientSession() as session:
+            while self.running:
+                try:
+                    markets = await self.get_macro_markets(session)
+                    self.logger.info(f"发现 {len(markets)} 个宏观市场")
+                    
+                    cat_count = {}
+                    for m in markets:
+                        cat_count[m['category']] = cat_count.get(m['category'], 0) + 1
+                    for cat, count in cat_count.items():
+                        self.logger.info(f"   {cat}: {count} 个市场")
+                    
+                    trade_count = 0
+                    for market in markets[:5]:
+                        if await self.analyze_and_trade(market, session):
+                            trade_count += 1
+                    
+                    if trade_count > 0:
+                        self.logger.info(f"本轮执行 {trade_count} 笔交易")
+                    self.logger.info(f"累计交易: {self.trades_executed} 笔")
+                    
+                    await asyncio.sleep(self.scan_interval)
+                    
+                except Exception as e:
+                    self.logger.error(f"扫描错误: {e}")
+                    await asyncio.sleep(60)
+    
+    def stop(self):
+        self.running = False
+
+
+if __name__ == "__main__":
+    trader = MacroTrader()
+    try:
+        asyncio.run(trader.run())
+    except KeyboardInterrupt:
+        trader.stop()
+        print("宏观策略已停止")

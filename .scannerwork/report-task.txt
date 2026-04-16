@@ -1,0 +1,6 @@
+projectKey=irisquant
+serverUrl=http://localhost:9000
+serverVersion=26.4.0.121862
+dashboardUrl=http://localhost:9000/dashboard?id=irisquant
+ceTaskId=b6854922-d17f-4884-81fd-318bc91a64fc
+ceTaskUrl=http://localhost:9000/api/ce/task?id=b6854922-d17f-4884-81fd-318bc91a64fc

@@ -105,13 +105,6 @@ class SimulatedExchange:
         self.prices = {"BTC/USDT": 65000.0, "BTC-PERP": 65100.0}
 
     def get_price(self, symbol: str) -> float:
-        # 如果是 Polymarket 市场（YES/NO 或包含市场ID）
-        if symbol in ['YES', 'NO'] or 'election' in symbol or 'nomination' in symbol:
-            # 返回模拟价格（0.01-0.99 之间）
-            import hashlib
-            hash_val = int(hashlib.md5(symbol.encode()).hexdigest()[:8], 16)
-            price = 0.05 + (hash_val % 90) / 100
-            return round(price, 3)
         return self.prices.get(symbol, 65000.0)
 
     def update_price(self, symbol: str, price: float):
@@ -123,7 +116,6 @@ class SimulatedExchange:
             return {"success": False, "reason": "account_not_found"}
         account._exchange = self
         price = self.get_price(symbol)
-        # 对于 Polymarket 市场，记录市场ID用于后续结算
         result = account.execute(symbol, amount_usdt, price, side)
         self.save_state()
         return result
@@ -141,7 +133,6 @@ class SimulatedExchange:
             "accounts": {
                 aid: {
                     "balance": acc.balance,
-                    "available": acc.available,
                     "initial_balance": acc.initial_balance,
                     "daily_pnl": acc.daily_pnl,
                     "total_pnl": acc.total_pnl

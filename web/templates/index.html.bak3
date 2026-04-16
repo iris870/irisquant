@@ -22,7 +22,6 @@
             <div class="flex items-center gap-4">
                 <h1 class="text-2xl font-bold text-emerald-500">IrisQuant v2.1</h1>
                 <a href="/analytics" class="text-zinc-400 hover:text-emerald-500 transition text-sm font-bold border-l border-white/10 pl-4">📊 账户表现</a>
-                <a href="http://43.160.229.166:3000/smart-money" class="text-zinc-400 hover:text-emerald-500 transition text-sm font-bold border-l border-white/10 pl-4" target="_blank">🔗 irissmart</a>
                 <div class="flex gap-4 px-4 py-1 bg-black/40 rounded-full border border-white/5">
                     <div class="flex items-center gap-2">
                         <span class="text-[9px] text-zinc-500 uppercase font-bold">Binance Market</span>

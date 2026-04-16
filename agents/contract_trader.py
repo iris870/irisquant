@@ -1,7 +1,6 @@
 import os
 import sys
 
-# Ensure irisquant root and venv site-packages are in the path
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(ROOT_DIR)
 VENV_SITE = os.path.join(ROOT_DIR, "venv/lib/python3.12/site-packages")
@@ -11,32 +10,38 @@ if os.path.exists(VENV_SITE) and VENV_SITE not in sys.path:
 import asyncio
 import time
 import aiohttp
-import math
-from datetime import datetime
 from agents.base import BaseAgent
 from simulation.exchange_sim import sim_exchange
+
 
 class ContractTraderAgent(BaseAgent):
     def __init__(self):
         super().__init__("contract-trader")
         self.account_id = "B"
         self.symbol = "BTCUSDT"
-        self.leverage = 5
-        self.position_ratio = 0.15
-        self.last_trade = 0
+
+        # ========== 仓位参数 ==========
+        self.margin = 1000           # 保证金 10000 USDT
+        self.leverage = 5             # 5 倍杠杆
+        self.position_size = self.margin * self.leverage
+
+        self.last_trade_time = 0
         self.binance_fapi_url = "https://fapi.binance.com"
         self._session = None
-        
-        # Strategy Parameters
-        self.volatility_threshold = 4.5
+
+        # ========== 策略参数（最优参数） ==========
         self.rsi_period = 14
-        self.atr_period = 14
-        self.atr_sl_mult = 2.0
-        self.atr_tp_mult = 4.0
+        self.rsi_bullish = 40
+        self.rsi_bearish = 60
+        self.trend_stop_pct = 0.005    # 趋势止损 0.5%
+        self.signal_buffer_pct = 0.02  # 信号缓冲 2%
+        self.profit_target = 0.03      # 止盈目标 3%
+        self.trailing_stop_pct = 0.015 # 移动止盈回撤 1.5%
+        self.fixed_stop_pct = 0.05     # 固定止损 5%
 
     async def _on_start(self):
         self._session = aiohttp.ClientSession()
-        self.logger.info("agent_started", agent=self.name)
+        self.logger.info("agent_started")
         asyncio.create_task(self._strategy_loop())
 
     async def stop(self):
@@ -45,9 +50,20 @@ class ContractTraderAgent(BaseAgent):
             await self._session.close()
         await super().stop()
 
+    async def _get_realtime_price(self):
+        try:
+            url = f"{self.binance_fapi_url}/fapi/v1/ticker/price?symbol={self.symbol}"
+            async with self._session.get(url, timeout=3) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return float(data["price"])
+        except Exception as e:
+            self.logger.error(f"获取实时价格失败: {e}")
+        return None
+
     def _calculate_ema(self, data, period):
         if len(data) < period:
-            return data[-1]
+            return data[-1] if data else 0
         alpha = 2 / (period + 1)
         ema = data[0]
         for price in data[1:]:
@@ -58,159 +74,170 @@ class ContractTraderAgent(BaseAgent):
         if len(closes) < period + 1:
             return 50
         deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
-        gains = [d if d > 0 else 0 for d in deltas]
-        losses = [-d if d < 0 else 0 for d in deltas]
-        
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-        
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            
+        gains = [d if d > 0 else 0 for d in deltas[-period:]]
+        losses = [-d if d < 0 else 0 for d in deltas[-period:]]
+        avg_gain = sum(gains) / period
+        avg_loss = sum(losses) / period
         if avg_loss == 0:
             return 100
         rs = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
-    def _calculate_atr(self, highs, lows, closes, period=14):
-        if len(closes) < period + 1:
-            return 0
-        tr_list = []
-        for i in range(1, len(closes)):
-            tr = max(
-                highs[i] - lows[i],
-                abs(highs[i] - closes[i-1]),
-                abs(lows[i] - closes[i-1])
-            )
-            tr_list.append(tr)
-        return sum(tr_list[-period:]) / period
-
     async def _get_market_indicators(self):
-        """Fetch data and calculate technical indicators"""
         try:
             url = f"{self.binance_fapi_url}/fapi/v1/klines?symbol={self.symbol}&interval=1h&limit=100"
             async with self._session.get(url, timeout=5) as resp:
                 if resp.status != 200:
                     return None
                 klines = await resp.json()
-                
+
             closes = [float(k[4]) for k in klines]
-            highs = [float(k[2]) for k in klines]
-            lows = [float(k[3]) for k in klines]
             current_price = closes[-1]
 
             ema20 = self._calculate_ema(closes, 20)
             ema50 = self._calculate_ema(closes, 50)
-            
-            trend = "neutral"
+
             if ema20 > ema50 and current_price > ema20:
                 trend = "bullish"
             elif ema20 < ema50 and current_price < ema20:
                 trend = "bearish"
+            else:
+                trend = "neutral"
 
             rsi = self._calculate_rsi(closes, self.rsi_period)
-            vol_highs = highs[-24:]
-            vol_lows = lows[-24:]
-            volatilities = [(h - l) / l * 100 for h, l in zip(vol_highs, vol_lows)]
-            avg_volatility = sum(volatilities) / len(volatilities)
-            atr = self._calculate_atr(highs, lows, closes, self.atr_period)
 
-            return {
-                "price": current_price,
-                "trend": trend,
-                "rsi": rsi,
-                "volatility": avg_volatility,
-                "atr": atr
-            }
+            return {"price": current_price, "trend": trend, "rsi": rsi}
         except Exception as e:
-            self.logger.error(f"Error fetching indicators: {e}")
+            self.logger.error(f"获取指标失败: {e}")
             return None
+
+    async def _get_trend_4h(self):
+        try:
+            url = f"{self.binance_fapi_url}/fapi/v1/klines?symbol={self.symbol}&interval=4h&limit=100"
+            async with self._session.get(url, timeout=5) as resp:
+                if resp.status != 200:
+                    return "neutral"
+                klines = await resp.json()
+            closes = [float(k[4]) for k in klines]
+            current_price = closes[-1]
+            ema20 = self._calculate_ema(closes, 20)
+            ema50 = self._calculate_ema(closes, 50)
+            if ema20 > ema50 and current_price > ema20:
+                return "bullish"
+            elif ema20 < ema50 and current_price < ema20:
+                return "bearish"
+            return "neutral"
+        except Exception as e:
+            self.logger.error(f"获取4小时趋势失败: {e}")
+            return "neutral"
 
     async def _strategy_loop(self):
         self.logger.info("strategy_loop_started")
         while self.running:
-            await asyncio.sleep(45)
-            
+            await asyncio.sleep(60)
+
+            trend_4h = await self._get_trend_4h()
             data = await self._get_market_indicators()
             if not data:
                 continue
 
             price = data["price"]
-            trend = data["trend"]
             rsi = data["rsi"]
-            vol = data["volatility"]
-            atr = data["atr"]
 
-            if time.time() - self.last_trade < 300:
-                continue
-
-            balance = await sim_exchange.fetch_balance(self.account_id)
-            if balance["daily_pnl"] / 50000 < -0.03:
-                await self._close_position("daily_stop_loss")
-                continue
+            self.logger.info(f"市场: price={price:.0f}, trend_4h={trend_4h}, rsi={rsi:.1f}")
 
             pos = sim_exchange.accounts[self.account_id].position
-            
-            if not pos:
-                if vol > self.volatility_threshold:
+
+            if pos is None:
+                if trend_4h == "bullish" and rsi > self.rsi_bullish:
+                    self.logger.info(f"开多仓: amount=${self.position_size:.0f}")
+                    result = await sim_exchange.create_order(self.account_id, self.symbol, "buy", self.position_size)
+                    if result["success"]:
+                        self.last_trade_time = time.time()
+                        self.logger.info(f"开仓成功: buy @ {price:.0f}")
+                    else:
+                        self.logger.info(f"开仓失败: {result}")
+
+                elif trend_4h == "bearish" and rsi < self.rsi_bearish:
+                    self.logger.info(f"开空仓: amount=${self.position_size:.0f}")
+                    result = await sim_exchange.create_order(self.account_id, self.symbol, "sell", self.position_size)
+                    if result["success"]:
+                        self.last_trade_time = time.time()
+                        self.logger.info(f"开仓成功: sell @ {price:.0f}")
+                    else:
+                        self.logger.info(f"开仓失败: {result}")
+
+            else:
+                entry = pos.entry_price
+                side = pos.side
+                current_price = await self._get_realtime_price()
+                if not current_price:
                     continue
 
-                if trend == "bullish" and rsi < 40:
-                    sl = price - (self.atr_sl_mult * atr)
-                    tp = price + (self.atr_tp_mult * atr)
-                    await self._trade("buy", balance["total"], price, tp, sl)
-                
-                elif trend == "bearish" and rsi > 60:
-                    sl = price + (self.atr_sl_mult * atr)
-                    tp = price - (self.atr_tp_mult * atr)
-                    await self._trade("sell", balance["total"], price, tp, sl)
-            
-            else:
-                side = pos.side
-                entry = pos.entry_price
-                if side == "buy":
-                    curr_sl = entry - (self.atr_sl_mult * atr)
-                    curr_tp = entry + (self.atr_tp_mult * atr)
-                    if price >= curr_tp or price <= curr_sl:
-                        await self._close_position(f"exit_{'tp' if price >= curr_tp else 'sl'}")
+                if not hasattr(self, 'highest_price'):
+                    self.highest_price = entry
+                    self.lowest_price = entry
+
+                if side == "long":
+                    self.highest_price = max(self.highest_price, current_price)
+                    drawdown = (self.highest_price - current_price) / self.highest_price
+                    profit_pct = (current_price - entry) / entry
+
+                    should_close = False
+                    reason = ""
+
+                    if drawdown >= self.trend_stop_pct:
+                        should_close = True
+                        reason = "趋势止损"
+                    elif profit_pct >= self.profit_target:
+                        trailing = (self.highest_price - current_price) / self.highest_price
+                        if trailing >= self.trailing_stop_pct:
+                            should_close = True
+                            reason = "移动止盈"
+                    elif profit_pct <= -self.fixed_stop_pct:
+                        should_close = True
+                        reason = "固定止损"
+
+                    if not should_close:
+                        buffer_price = entry * (1 - self.signal_buffer_pct)
+                        if current_price <= buffer_price:
+                            should_close = True
+                            reason = "信号止损"
+
                 else:
-                    curr_sl = entry + (self.atr_sl_mult * atr)
-                    curr_tp = entry - (self.atr_tp_mult * atr)
-                    if price <= curr_tp or price >= curr_sl:
-                        await self._close_position(f"exit_{'tp' if price <= curr_tp else 'sl'}")
+                    self.lowest_price = min(self.lowest_price, current_price)
+                    drawup = (current_price - self.lowest_price) / self.lowest_price
+                    profit_pct = (entry - current_price) / entry
 
-    async def _trade(self, side: str, balance: float, price: float, tp: float, sl: float):
-        amount = balance * self.position_ratio * self.leverage
-        result = await sim_exchange.create_order(self.account_id, self.symbol, side, amount)
-        if result["success"]:
-            self.last_trade = time.time()
-            # Record open trade using the synchronous record_trade call from get_recorder()
-            trade_data = {
-                "strategy": self.name,
-                "direction": "long" if side == "buy" else "short",
-                "entry_price": price,
-                "position_size": amount,
-                "status": "open",
-                "open_time": int(time.time())
-            }
-            self.recorder.record_trade(trade_data)
-            self.logger.info("entry_opened", **trade_data, tp=tp, sl=sl)
+                    should_close = False
+                    reason = ""
 
-    async def _close_position(self, reason: str):
-        pos = sim_exchange.accounts[self.account_id].position
-        if pos:
-            result = await sim_exchange.close_position(self.account_id, self.symbol)
-            if result["success"]:
-                # Update the last open trade for this strategy
-                update_data = {
-                    "strategy": self.name,
-                    "exit_price": result["exit_price"],
-                    "pnl": result["pnl"],
-                    "status": "closed"
-                }
-                self.recorder.update_trade(update_data)
-                self.logger.info("position_closed", reason=reason, pnl=result["pnl"])
+                    if drawup >= self.trend_stop_pct:
+                        should_close = True
+                        reason = "趋势止损"
+                    elif profit_pct >= self.profit_target:
+                        trailing = (current_price - self.lowest_price) / self.lowest_price
+                        if trailing >= self.trailing_stop_pct:
+                            should_close = True
+                            reason = "移动止盈"
+                    elif profit_pct <= -self.fixed_stop_pct:
+                        should_close = True
+                        reason = "固定止损"
+
+                    if not should_close:
+                        buffer_price = entry * (1 + self.signal_buffer_pct)
+                        if current_price >= buffer_price:
+                            should_close = True
+                            reason = "信号止损"
+
+                if should_close:
+                    result = await sim_exchange.close_position(self.account_id, self.symbol)
+                    if result["success"]:
+                        pnl = result.get("pnl", 0)
+                        self.logger.info(f"平仓成功, pnl={pnl:.2f}, {reason}")
+                        delattr(self, 'highest_price')
+                        delattr(self, 'lowest_price')
+
 
 async def main():
     agent = ContractTraderAgent()
@@ -218,14 +245,9 @@ async def main():
         await agent.start()
         while agent.running:
             await asyncio.sleep(1)
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        pass
-    finally:
+    except KeyboardInterrupt:
         await agent.stop()
 
+
 if __name__ == "__main__":
-    import sys
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        sys.exit(0)
+    asyncio.run(main())
